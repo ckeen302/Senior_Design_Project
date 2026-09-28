@@ -8,12 +8,12 @@
  */
 
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import NetInfo from "@react-native-community/netinfo";
 import { createAsyncStoragePersister } from "@tanstack/query-async-storage-persister";
 import { focusManager, onlineManager, QueryClient } from "@tanstack/react-query";
 import type { PersistedClient, PersistQueryClientProviderProps } from "@tanstack/react-query-persist-client";
 import { AppState, Platform } from "react-native";
 import { ApiError } from "./errors";
+import { subscribeToConnectivity } from "./network";
 
 export const CACHE_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 
@@ -84,11 +84,7 @@ export const persistOptions: PersistQueryClientProviderProps["persistOptions"] =
 
 /** Wires React Query to NetInfo (online state) and AppState (focus). Returns a cleanup function. */
 export function registerQueryClientListeners(): () => void {
-  onlineManager.setEventListener((setOnline) =>
-    NetInfo.addEventListener((state) => {
-      setOnline(state.isConnected !== false && state.isInternetReachable !== false);
-    })
-  );
+  onlineManager.setEventListener((setOnline) => subscribeToConnectivity(setOnline));
 
   if (Platform.OS === "web") return () => {};
   const subscription = AppState.addEventListener("change", (status) => {

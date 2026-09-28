@@ -217,10 +217,15 @@ export class EdgarClient {
   }
 }
 
-/** Turns "MICROSOFT CORP /DE/" into "Microsoft Corp"; leaves mixed-case names alone. */
+/**
+ * Turns "MICROSOFT CORP /DE/" into "Microsoft Corp" and "ELI LILLY & Co" into
+ * "Eli Lilly & Co"; names that are already mostly mixed case are left alone.
+ */
 export function prettifyCompanyName(name: string): string {
   const cleaned = name.replace(/\s*\/[A-Z]{2,5}\/?\s*$/, "").trim();
-  if (cleaned !== cleaned.toUpperCase()) return cleaned;
+  const letters = cleaned.replace(/[^A-Za-z]/g, "");
+  const upper = letters.replace(/[^A-Z]/g, "").length;
+  if (letters.length === 0 || upper / letters.length < 0.7) return cleaned;
   return cleaned
     .toLowerCase()
     .replace(/\b([a-z])([a-z]*)/g, (_m, first: string, rest: string) => first.toUpperCase() + rest)

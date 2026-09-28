@@ -1,7 +1,7 @@
 import { Ionicons } from "@expo/vector-icons";
 import { useNavigation } from "@react-navigation/native";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import { FlatList, Pressable, RefreshControl, StyleSheet, View } from "react-native";
+import { Alert, FlatList, Platform, Pressable, RefreshControl, StyleSheet, View } from "react-native";
 import ReanimatedSwipeable from "react-native-gesture-handler/ReanimatedSwipeable";
 import { AppText } from "../components/AppText";
 import { SentimentBar } from "../components/SentimentBar";
@@ -14,6 +14,20 @@ import { normalizeLabel, sentimentColor } from "../lib/wisi";
 import { colors, fonts, radius, spacing } from "../theme";
 
 const ACTION_WIDTH = 96;
+
+/** Long-press alternative to swiping (accessibility, mouse users on web). */
+function confirmRemoval(ticker: string, onConfirm: () => void) {
+  const message = `Remove ${ticker} from your watchlist?`;
+  if (Platform.OS === "web") {
+    const confirm = (globalThis as { confirm?: (text: string) => boolean }).confirm;
+    if (!confirm || confirm(message)) onConfirm();
+    return;
+  }
+  Alert.alert("Remove stock", message, [
+    { text: "Cancel", style: "cancel" },
+    { text: "Remove", style: "destructive", onPress: onConfirm },
+  ]);
+}
 
 function WatchlistRow({
   item,
@@ -53,8 +67,10 @@ function WatchlistRow({
       <Pressable
         style={({ pressed }) => [styles.row, pressed && styles.pressed]}
         onPress={onOpen}
+        onLongPress={() => confirmRemoval(company?.ticker ?? "this stock", onRemove)}
+        delayLongPress={450}
         accessibilityRole="button"
-        accessibilityHint="Swipe left to remove"
+        accessibilityHint="Swipe left or long-press to remove"
         accessibilityLabel={`${company?.ticker}, ${company?.company_name}, sentiment ${score.toFixed(0)} ${label}`}
         accessibilityActions={[{ name: "delete", label: "Remove from watchlist" }]}
         onAccessibilityAction={(e) => e.nativeEvent.actionName === "delete" && onRemove()}
@@ -143,7 +159,7 @@ export function WatchlistScreen() {
         ListHeaderComponent={
           data.length > 0 ? (
             <AppText variant="caption" style={styles.hint}>
-              Swipe left on a stock to remove it. Tap for insider activity and live price.
+              Swipe left (or long-press) to remove a stock. Tap for insider activity and live price.
             </AppText>
           ) : null
         }
@@ -199,7 +215,7 @@ const styles = StyleSheet.create({
   content: { padding: spacing.lg, gap: spacing.md, flexGrow: 1 },
   hint: { marginBottom: spacing.xs },
   addButton: { marginRight: spacing.lg },
-  swipeContainer: { borderRadius: radius.lg, overflow: "hidden", backgroundColor: colors.sell },
+  swipeContainer: { borderRadius: radius.lg, overflow: "hidden" },
   row: {
     backgroundColor: colors.surface,
     padding: spacing.lg,

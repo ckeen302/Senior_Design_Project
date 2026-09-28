@@ -1,6 +1,7 @@
 /**
- * Semicircular 0–100 WISI gauge drawn with Skia. Red (bearish ≤ 40), grey
- * (neutral) and green (bullish ≥ 60) bands with an animated needle.
+ * Semicircular 0–100 WISI gauge drawn with Skia: dimmed red (bearish ≤ 40),
+ * grey (neutral) and green (bullish ≥ 60) bands, a value arc growing from the
+ * neutral midpoint towards the score, and an animated needle.
  */
 
 import { Canvas, Circle, Line, Path, Skia, vec } from "@shopify/react-native-skia";
@@ -20,11 +21,11 @@ interface Props {
 const STROKE = 14;
 
 function arcPath(cx: number, cy: number, r: number, fromIndex: number, toIndex: number) {
-  const path = Skia.Path.Make();
   const start = 180 + (fromIndex / 100) * 180;
   const sweep = ((toIndex - fromIndex) / 100) * 180;
-  path.addArc({ x: cx - r, y: cy - r, width: r * 2, height: r * 2 }, start, sweep);
-  return path;
+  return Skia.PathBuilder.Make()
+    .addArc({ x: cx - r, y: cy - r, width: r * 2, height: r * 2 }, start, sweep)
+    .detach();
 }
 
 export function SentimentGauge({ index, label, width = 260 }: Props) {
@@ -43,6 +44,12 @@ export function SentimentGauge({ index, label, width = 260 }: Props) {
       { path: arcPath(cx, cy, r, BULLISH_THRESHOLD + gap, 100), color: colors.buy },
     ];
   }, [cx, cy, r]);
+
+  // Diverging from the neutral midpoint: bullish scores fill right, bearish left.
+  const valueArc = useMemo(
+    () => (Math.abs(clamped - 50) >= 0.5 ? arcPath(cx, cy, r, Math.min(50, clamped), Math.max(50, clamped)) : null),
+    [cx, cy, r, clamped],
+  );
 
   const progress = useSharedValue(50);
   useEffect(() => {
@@ -64,9 +71,11 @@ export function SentimentGauge({ index, label, width = 260 }: Props) {
     >
       <Canvas style={{ width, height }}>
         {bands.map((band, i) => (
-          <Path key={i} path={band.path} style="stroke" strokeWidth={STROKE} color={band.color} opacity={0.35} strokeCap="butt" />
+          <Path key={i} path={band.path} style="stroke" strokeWidth={STROKE} color={band.color} opacity={0.3} strokeCap="butt" />
         ))}
-        <Path path={arcPath(cx, cy, r, 0, Math.max(0.5, clamped))} style="stroke" strokeWidth={STROKE} color={color} opacity={0.9} strokeCap="butt" />
+        {valueArc ? (
+          <Path path={valueArc} style="stroke" strokeWidth={STROKE} color={color} strokeCap="butt" />
+        ) : null}
         <Line p1={vec(cx, cy)} p2={needleEnd} color={colors.text} strokeWidth={3} strokeCap="round" />
         <Circle cx={cx} cy={cy} r={8} color={colors.text} />
         <Circle cx={cx} cy={cy} r={4} color={colors.background} />

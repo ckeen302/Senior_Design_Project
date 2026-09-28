@@ -15,6 +15,8 @@ import { colors, fonts, radius, spacing } from "../theme";
 
 type Direction = "bullish" | "bearish";
 
+const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
+
 export function SignalsScreen() {
   const navigation = useNavigation();
   const [direction, setDirection] = useState<Direction>("bullish");
@@ -45,7 +47,8 @@ export function SignalsScreen() {
           </AppText>
           <SentimentBar index={score} label={label} />
           <AppText variant="caption" color={colors.textFaint}>
-            90d: {item.buy_count} buys · {item.sell_count} sells · net weighted {formatCompactCurrency(item.net_weighted_value)}
+            90d: {plural(item.buy_count, "buy")} · {plural(item.sell_count, "sell")} · net weighted{" "}
+            {formatCompactCurrency(item.net_weighted_value)}
           </AppText>
         </View>
       </Pressable>

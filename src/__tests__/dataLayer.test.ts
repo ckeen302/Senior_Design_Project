@@ -4,8 +4,8 @@ import { matchesFeedFilter, sanitizeSearchTerm } from "../lib/api";
 import { ApiError, errorMessage, toApiError } from "../lib/errors";
 import { isRetryableError, trimPersistedClient } from "../lib/queryClient";
 
-const jwt = (payload: object) =>
-  `eyJhbGciOiJIUzI1NiJ9.${Buffer.from(JSON.stringify(payload)).toString("base64url")}.c2lnbmF0dXJl`;
+const base64url = (text: string) => btoa(text).replace(/=+$/, "").replace(/\+/g, "-").replace(/\//g, "_");
+const jwt = (payload: object) => `eyJhbGciOiJIUzI1NiJ9.${base64url(JSON.stringify(payload))}.c2lnbmF0dXJl`;
 
 describe("client key guard", () => {
   it("rejects secret and service_role keys", () => {
@@ -90,4 +90,16 @@ it("keeps only the first feed pages in the offline snapshot", () => {
   const trimmed = trimPersistedClient(client as any);
   expect((trimmed.clientState.queries[0].state.data as { pages: unknown[] }).pages).toHaveLength(3);
   expect(trimmed.clientState.queries[1].state.data).toEqual({ id: "x" });
+});
+
+describe("connectivity", () => {
+  // jest-expo runs as iOS here, where the OS reports internet reachability.
+  const { isOnlineState } = jest.requireActual("../lib/network") as typeof import("../lib/network");
+  it("requires a connection and, on native, reachability", () => {
+    expect(isOnlineState({ isConnected: false, isInternetReachable: null })).toBe(false);
+    expect(isOnlineState({ isConnected: true, isInternetReachable: false })).toBe(false);
+    expect(isOnlineState({ isConnected: true, isInternetReachable: null })).toBe(true);
+    expect(isOnlineState({ isConnected: true, isInternetReachable: true })).toBe(true);
+    expect(isOnlineState({ isConnected: null, isInternetReachable: null })).toBe(true);
+  });
 });

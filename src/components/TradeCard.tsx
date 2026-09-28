@@ -54,7 +54,11 @@ function TradeCardComponent({ trade, company, now, highlighted, onPress }: Trade
             </AppText>
           </View>
         ) : (
-          <View style={styles.companyRow} />
+          <View style={styles.companyRow}>
+            <AppText variant="caption" numberOfLines={1} style={styles.companyName}>
+              {info.description}
+            </AppText>
+          </View>
         )}
         <TransactionBadge code={trade.transaction_code} />
       </View>

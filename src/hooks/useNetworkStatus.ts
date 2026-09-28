@@ -1,8 +1,9 @@
-import { useNetInfo } from "@react-native-community/netinfo";
+import { useEffect, useState } from "react";
+import { subscribeToConnectivity } from "../lib/network";
 
-/** Online = connected and (when known) able to reach the internet. */
+/** Current connectivity; `isKnown` is false until the first reading arrives. */
 export function useNetworkStatus() {
-  const netInfo = useNetInfo();
-  const isOnline = netInfo.isConnected !== false && netInfo.isInternetReachable !== false;
-  return { isOnline, isKnown: netInfo.isConnected !== null, type: netInfo.type };
+  const [online, setOnline] = useState<boolean | null>(null);
+  useEffect(() => subscribeToConnectivity(setOnline), []);
+  return { isOnline: online !== false, isKnown: online !== null };
 }
