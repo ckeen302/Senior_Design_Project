@@ -37,3 +37,6 @@ yarn-error.*
 *.tsbuildinfo
 .DS_Store
 coverage/
+
+# Skia's CanvasKit binary is copied here by `npm install` (postinstall: setup-skia-web)
+public/canvaskit.wasm

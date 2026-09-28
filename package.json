@@ -1,0 +1,79 @@
+{
+  "name": "insider-pulse",
+  "version": "1.0.0",
+  "private": true,
+  "description": "InsiderPulse \u2014 real-time SEC Form 4 insider trading tracker (Expo + Supabase)",
+  "main": "index.ts",
+  "scripts": {
+    "start": "expo start",
+    "android": "expo start --android",
+    "ios": "expo start --ios",
+    "web": "expo start --web",
+    "typecheck": "tsc --noEmit",
+    "test": "jest",
+    "check:secrets": "node scripts/check-client-secrets.mjs",
+    "verify": "npm run typecheck && npm test && npm run check:secrets",
+    "test:functions": "deno test --config supabase/functions/fetch-sec-filings/deno.json --allow-read supabase/functions/tests/",
+    "test:db": "bash scripts/verify-db.sh",
+    "postinstall": "setup-skia-web public",
+    "export:web": "expo export --platform web"
+  },
+  "dependencies": {
+    "@expo-google-fonts/inter": "^0.4.2",
+    "@expo/metro-runtime": "~57.0.16",
+    "@expo/vector-icons": "^15.0.2",
+    "@react-native-async-storage/async-storage": "2.2.0",
+    "@react-native-community/netinfo": "12.0.1",
+    "@react-navigation/bottom-tabs": "^7.19.2",
+    "@react-navigation/native": "^7.4.1",
+    "@react-navigation/native-stack": "^7.19.2",
+    "@shopify/react-native-skia": "2.6.2",
+    "@supabase/supabase-js": "^2.117.2",
+    "@tanstack/query-async-storage-persister": "^5.104.0",
+    "@tanstack/react-query": "^5.104.0",
+    "@tanstack/react-query-persist-client": "^5.104.0",
+    "expo": "~57.0.25",
+    "expo-constants": "~57.0.19",
+    "expo-device": "~57.0.2",
+    "expo-font": "~57.0.4",
+    "expo-haptics": "~57.0.3",
+    "expo-linking": "~57.0.11",
+    "expo-notifications": "~57.0.21",
+    "expo-secure-store": "~57.0.4",
+    "expo-splash-screen": "~57.0.9",
+    "expo-status-bar": "~57.0.1",
+    "react": "19.2.3",
+    "react-dom": "19.2.3",
+    "react-native": "0.86.3",
+    "react-native-gesture-handler": "~2.32.0",
+    "react-native-reanimated": "4.5.1",
+    "react-native-safe-area-context": "~5.7.0",
+    "react-native-screens": "~4.26.0",
+    "react-native-url-polyfill": "^4.0.0",
+    "react-native-web": "^0.21.2",
+    "react-native-worklets": "0.10.1",
+    "victory-native": "^42.0.1",
+    "zustand": "^5.0.15"
+  },
+  "devDependencies": {
+    "@testing-library/react-native": "^14.0.1",
+    "@types/jest": "29.5.14",
+    "@types/react": "~19.2.4",
+    "jest": "~29.7.0",
+    "jest-expo": "~57.0.5",
+    "typescript": "~6.0.3"
+  },
+  "jest": {
+    "preset": "jest-expo",
+    "setupFiles": [
+      "<rootDir>/jest.setup.js"
+    ],
+    "testPathIgnorePatterns": [
+      "/node_modules/",
+      "<rootDir>/supabase/"
+    ],
+    "transformIgnorePatterns": [
+      "node_modules/(?!((jest-)?react-native|@react-native(-community)?|expo(nent)?|@expo(nent)?/.*|@expo-google-fonts/.*|react-navigation|@react-navigation/.*|@supabase/.*|victory-native|@shopify/react-native-skia|react-native-reanimated|react-native-worklets|react-native-gesture-handler|zustand))"
+    ]
+  }
+}
