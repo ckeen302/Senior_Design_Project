@@ -76,7 +76,8 @@ const persister = createAsyncStoragePersister({
 export const persistOptions: PersistQueryClientProviderProps["persistOptions"] = {
   persister,
   maxAge: CACHE_MAX_AGE_MS,
-  buster: "v1",
+  // Bump when cached data shapes change; older snapshots are discarded (v2: Insider Signal).
+  buster: "v2",
   dehydrateOptions: {
     shouldDehydrateQuery: (query) => query.state.status === "success" && query.meta?.persist !== false,
   },
