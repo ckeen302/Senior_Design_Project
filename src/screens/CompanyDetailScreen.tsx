@@ -74,7 +74,8 @@ export function CompanyDetailScreen({ route, navigation }: Props) {
   }, [navigation, ticker, watchEntry, watchBusy, companyId, addToWatchlist, removeFromWatchlist]);
 
   if (company.isPending) return <LoadingView label="Loading company…" />;
-  if (company.isError) return <ErrorState message={errorMessage(company.error)} onRetry={() => company.refetch()} />;
+  // A failed background refresh keeps the saved data on screen; only a first load can fail.
+  if (company.isLoadingError) return <ErrorState message={errorMessage(company.error)} onRetry={() => company.refetch()} />;
 
   const detail = company.data;
   const sentiment = detail.sentiment;
@@ -154,7 +155,7 @@ export function CompanyDetailScreen({ route, navigation }: Props) {
         <SectionHeader title="Why this score" />
         {breakdown.isPending ? (
           <LoadingView />
-        ) : breakdown.isError ? (
+        ) : breakdown.isLoadingError ? (
           <ErrorState message={errorMessage(breakdown.error)} onRetry={() => breakdown.refetch()} />
         ) : (
           <SignalBreakdown rows={breakdown.data} sentiment={sentiment} price={price.price} />
@@ -188,7 +189,7 @@ export function CompanyDetailScreen({ route, navigation }: Props) {
             <View style={styles.chartPlaceholder}>
               <LoadingView />
             </View>
-          ) : activity.isError ? (
+          ) : activity.isLoadingError ? (
             <ErrorState message={errorMessage(activity.error)} onRetry={() => activity.refetch()} />
           ) : (
             <BuySellChart data={activity.data} metric={metric} />
@@ -212,7 +213,7 @@ export function CompanyDetailScreen({ route, navigation }: Props) {
         </View>
         {transactions.isPending ? (
           <LoadingView />
-        ) : transactions.isError ? (
+        ) : transactions.isLoadingError ? (
           <ErrorState message={errorMessage(transactions.error)} onRetry={() => transactions.refetch()} />
         ) : transactions.data.length === 0 ? (
           <AppText variant="caption" style={[styles.padded, styles.empty]}>

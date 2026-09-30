@@ -31,7 +31,7 @@ export function usePushTokenRefresh() {
     let cancelled = false;
     getPushPermission()
       .then((permission) => {
-        if (!cancelled && permission === "granted") return syncPushToken(userId, { prompt: false });
+        if (!cancelled && permission === "granted") return syncPushToken({ prompt: false });
       })
       .catch((error) => console.warn("[push] token refresh failed", error));
     return () => {

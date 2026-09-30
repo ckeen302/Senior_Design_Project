@@ -73,7 +73,9 @@ export const queryKeys = {
   signalBreakdown: (id: string) => ["company", id, "signal"] as const,
   activity: (id: string, months: number) => ["company", id, "activity", months] as const,
   leaderboard: (direction: SignalDirection) => ["leaderboard", direction] as const,
-  watchlist: ["watchlist"] as const,
+  /** Prefix of every user's watchlist key (for invalidation). */
+  watchlists: ["watchlist"] as const,
+  watchlist: (userId: string) => ["watchlist", userId] as const,
   search: (term: string) => ["search", term] as const,
   quote: (symbol: string) => ["quote", symbol] as const,
   profile: (userId: string) => ["profile", userId] as const,
@@ -321,6 +323,22 @@ export async function fetchProfile(userId: string): Promise<Profile | null> {
   const { data, error, status } = await supabase.from("profiles").select("*").eq("id", userId).maybeSingle();
   if (error) throw toApiError(error, status);
   return data;
+}
+
+/** Stores this device's push token on the signed-in user's profile (and takes it off any other). */
+export async function registerPushToken(token: string, platform: "ios" | "android"): Promise<void> {
+  const { error, status } = await supabase.rpc("register_push_token", { p_token: token, p_platform: platform });
+  if (error) throw toApiError(error, status);
+}
+
+/** Clears the user's push token only if it is still this device's. */
+export async function clearProfilePushToken(userId: string, token: string): Promise<void> {
+  const { error, status } = await supabase
+    .from("profiles")
+    .update({ expo_push_token: null, push_platform: null })
+    .eq("id", userId)
+    .eq("expo_push_token", token);
+  if (error) throw toApiError(error, status);
 }
 
 export async function updateProfile(

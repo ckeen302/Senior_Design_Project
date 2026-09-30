@@ -267,6 +267,10 @@ export type Database = {
       [_ in never]: never;
     };
     Functions: {
+      register_push_token: {
+        Args: { p_token: string; p_platform: string };
+        Returns: undefined;
+      };
       get_insider_activity: {
         Args: { target_company_id: string; months?: number };
         Returns: {

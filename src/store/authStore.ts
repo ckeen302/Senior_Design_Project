@@ -33,7 +33,15 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
 
   async initialize() {
     if (authSubscription) return;
-    const { data } = supabase.auth.onAuthStateChange((_event, session) => {
+    const { data } = supabase.auth.onAuthStateChange((event, session) => {
+      const previousUserId = get().user?.id;
+      const userId = session?.user?.id;
+      // Supabase can end the session itself (refresh token revoked or expired),
+      // and a different account can sign in: never leave the previous user's
+      // watchlist or profile in memory or in the offline copy.
+      if (event === "SIGNED_OUT" || (previousUserId && userId && userId !== previousUserId)) {
+        clearQueryCache().catch((error) => console.warn("[auth] clearing the cache failed:", error));
+      }
       set({ session, user: session?.user ?? null });
     });
     authSubscription = data.subscription;
@@ -81,7 +89,7 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
       try {
         await clearPushToken(userId);
       } catch {
-        // Offline: the token is replaced on the next sign-in on this device.
+        // Offline: whoever signs in next on this device takes the token over.
       }
     }
     try {

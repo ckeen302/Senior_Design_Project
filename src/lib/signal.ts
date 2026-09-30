@@ -59,11 +59,15 @@ export function signalDirection(t: TradeFlags): -1 | 0 | 1 {
   return 0;
 }
 
+/** stake_change_pct of a buy that opened a position (nothing held before), and the cap for tiny prior stakes. */
+export const NEW_POSITION_PCT = 9999;
+
 /** Mirrors insider_transactions.stake_change_pct. */
 export function stakeChangePct(code: string, shares: number, post: number | null | undefined): number | null {
   if (post === null || post === undefined || !(shares > 0)) return null;
   const round1 = (n: number) => Math.round(n * 10) / 10;
-  if (code === "P" && post - shares > 0) return round1(Math.min((shares / (post - shares)) * 100, 9999));
+  if (code === "P" && post - shares > 0) return round1(Math.min((shares / (post - shares)) * 100, NEW_POSITION_PCT));
+  if (code === "P" && post === shares) return NEW_POSITION_PCT;
   if (code === "S" && post + shares > 0) return round1((shares / (post + shares)) * 100);
   return null;
 }
@@ -73,11 +77,12 @@ const ROLE_PATTERNS: [RegExp, string][] = [
   [/\bcfo\b|chief financial|principal financial/i, "CFO"],
   [/\bcoo\b|chief operating/i, "COO"],
   [/\bcto\b|chief technology/i, "CTO"],
-  [/\bpresident\b/i, "President"],
-  [/\bchair/i, "Chair"],
+  // Vice presidents before "President", which also matches inside "Vice President".
   [/\bevp\b|executive vice president/i, "EVP"],
   [/\bsvp\b|senior vice president/i, "SVP"],
   [/\bvp\b|vice president/i, "VP"],
+  [/\bpresident\b/i, "President"],
+  [/\bchair/i, "Chair"],
   [/chief [a-z]+ officer/i, ""],
   [/\bdirector\b/i, "Director"],
   [/10\s*%|ten percent/i, "10% owner"],
@@ -142,7 +147,7 @@ function stakeNote(t: StoryInput, kind: TradeKind): string | null {
   const pct = t.stake_change_pct ?? stakeChangePct(t.transaction_code, t.shares, t.post_transaction_shares);
   if (pct === null || pct === undefined) return null;
   const shown = pct < 0.1 ? "<0.1" : pct < 1 ? pct.toFixed(1) : pct >= 1000 ? "1,000+" : String(Math.round(pct));
-  if (kind === "buy" || kind === "planned-buy") return `+${shown}% stake`;
+  if (kind === "buy" || kind === "planned-buy") return pct >= NEW_POSITION_PCT ? "New position" : `+${shown}% stake`;
   // Option sales: the exercised shares inflate the "holding", so skip the note.
   if (kind === "sell" || kind === "planned-sale" || kind === "tax-sale") return `Sold ${shown}% of stake`;
   return null;

@@ -12,6 +12,7 @@ import {
   type SentimentScore,
   type TradeScope,
 } from "../lib/api";
+import { uniqueTopic } from "../lib/realtime";
 import { supabase } from "../lib/supabase";
 
 export function useCompany(companyId: string) {
@@ -46,7 +47,7 @@ export function useCompanyRealtime(companyId: string) {
 
   useEffect(() => {
     const channel = supabase
-      .channel(`company:${companyId}`)
+      .channel(uniqueTopic(`company:${companyId}`))
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "sentiment_scores", filter: `company_id=eq.${companyId}` },

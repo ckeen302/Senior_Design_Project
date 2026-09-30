@@ -1,8 +1,9 @@
 import { isPrivilegedSupabaseKey } from "../config/env";
-import { normalizeRealtimeTransaction } from "../hooks/useInsiderFeed";
+import { createPendingRows, normalizeRealtimeTransaction } from "../hooks/useInsiderFeed";
 import { matchesFeedFilter, sanitizeSearchTerm } from "../lib/api";
 import { ApiError, errorMessage, toApiError } from "../lib/errors";
 import { isRetryableError, trimPersistedClient } from "../lib/queryClient";
+import { uniqueTopic } from "../lib/realtime";
 
 const base64url = (text: string) => btoa(text).replace(/=+$/, "").replace(/\+/g, "-").replace(/\//g, "_");
 const jwt = (payload: object) => `eyJhbGciOiJIUzI1NiJ9.${base64url(JSON.stringify(payload))}.c2lnbmF0dXJl`;
@@ -115,4 +116,31 @@ describe("connectivity", () => {
     expect(isOnlineState({ isConnected: true, isInternetReachable: true })).toBe(true);
     expect(isOnlineState({ isConnected: null, isInternetReachable: null })).toBe(true);
   });
+});
+
+describe("realtime rows waiting for their company", () => {
+  type Row = { id: string; price_suspect: boolean };
+
+  it("uses the newest version when an UPDATE arrives during the lookup", () => {
+    const pending = createPendingRows<Row>();
+    pending.start({ id: "a", price_suspect: false });
+    pending.update({ id: "a", price_suspect: true }); // flagged by the insert trigger
+    expect(pending.finish("a")).toEqual({ id: "a", price_suspect: true });
+    expect(pending.finish("a")).toBeNull();
+  });
+
+  it("drops a row deleted during the lookup and ignores rows it is not waiting for", () => {
+    const pending = createPendingRows<Row>();
+    pending.start({ id: "a", price_suspect: false });
+    pending.remove("a");
+    pending.update({ id: "a", price_suspect: false });
+    expect(pending.finish("a")).toBeNull();
+    pending.update({ id: "b", price_suspect: true });
+    expect(pending.finish("b")).toBeNull();
+  });
+});
+
+it("gives every realtime subscription its own topic", () => {
+  expect(uniqueTopic("company:x")).not.toBe(uniqueTopic("company:x"));
+  expect(uniqueTopic("feed")).toMatch(/^feed:\d+$/);
 });

@@ -15,6 +15,7 @@ import {
   matchesFeedFilter,
   queryKeys,
 } from "../lib/api";
+import { uniqueTopic } from "../lib/realtime";
 import { collapseGroupFilings, signalDirection, stakeChangePct } from "../lib/signal";
 import { supabase } from "../lib/supabase";
 
@@ -25,6 +26,34 @@ const LIVE_WINDOW_MS = 3 * 24 * 60 * 60 * 1000;
 
 type FeedData = InfiniteData<FeedItem[], number>;
 export type RealtimeStatus = "connecting" | "live" | "offline";
+
+/**
+ * Realtime INSERTs that are waiting for their company lookup. The database
+ * flags a mistyped price with an UPDATE in the same transaction as the INSERT,
+ * so that UPDATE (or a DELETE) can arrive before the row is in any cache: keep
+ * the newest version here and use it once the lookup finishes.
+ */
+export function createPendingRows<T extends { id: string }>() {
+  const rows = new Map<string, T | null>();
+  return {
+    start(row: T) {
+      rows.set(row.id, row);
+    },
+    /** Records a newer version if the row is still pending. */
+    update(row: T) {
+      if (rows.has(row.id) && rows.get(row.id) !== null) rows.set(row.id, row);
+    },
+    remove(id: string) {
+      if (rows.has(id)) rows.set(id, null);
+    },
+    /** The newest version of the row, or null when it was deleted meanwhile. */
+    finish(id: string): T | null {
+      const row = rows.get(id) ?? null;
+      rows.delete(id);
+      return row;
+    },
+  };
+}
 
 export function useInsiderFeed(filter: FeedFilter) {
   const query = useInfiniteQuery({
@@ -112,16 +141,19 @@ export function useRealtimeFeed(): { status: RealtimeStatus; freshIds: ReadonlyS
   useEffect(() => {
     let active = true;
     const timers: ReturnType<typeof setTimeout>[] = [];
+    const pending = createPendingRows<InsiderTransaction>();
 
     const channel = supabase
-      .channel("feed:insider_transactions")
+      .channel(uniqueTopic("feed:insider_transactions"))
       .on("postgres_changes", { event: "INSERT", schema: "public", table: "insider_transactions" }, async (payload) => {
-        const row = normalizeRealtimeTransaction(payload.new as Record<string, unknown>);
+        const inserted = normalizeRealtimeTransaction(payload.new as Record<string, unknown>);
         // The market-wide backfill inserts months-old filings: they belong further
         // down the feed (where a refresh will show them), not at the top.
-        if (Date.now() - Date.parse(row.filing_date) > LIVE_WINDOW_MS) return;
-        const company = await fetchCompanySummary(row.company_id).catch(() => null);
-        if (!active) return;
+        if (Date.now() - Date.parse(inserted.filing_date) > LIVE_WINDOW_MS) return;
+        pending.start(inserted);
+        const company = await fetchCompanySummary(inserted.company_id).catch(() => null);
+        const row = pending.finish(inserted.id);
+        if (!active || !row) return;
         const item: FeedItem = { ...row, company };
         updateFeedCaches(queryClient, (data, filter) => {
           if (!matchesFeedFilter(item, filter) || data.pages.some((p) => p.some((i) => i.id === item.id))) return data;
@@ -145,6 +177,7 @@ export function useRealtimeFeed(): { status: RealtimeStatus; freshIds: ReadonlyS
       })
       .on("postgres_changes", { event: "UPDATE", schema: "public", table: "insider_transactions" }, (payload) => {
         const row = normalizeRealtimeTransaction(payload.new as Record<string, unknown>);
+        pending.update(row);
         // A re-parsed or re-checked trade can stop matching a filter (e.g. a sale
         // re-classified as an option sale leaves "Sells"): drop it from that feed.
         updateFeedCaches(queryClient, (data, filter) => ({
@@ -159,6 +192,7 @@ export function useRealtimeFeed(): { status: RealtimeStatus; freshIds: ReadonlyS
       .on("postgres_changes", { event: "DELETE", schema: "public", table: "insider_transactions" }, (payload) => {
         const id = (payload.old as { id?: string }).id;
         if (!id) return;
+        pending.remove(id);
         updateFeedCaches(queryClient, (data) => ({
           ...data,
           pages: data.pages.map((page) => page.filter((i) => i.id !== id)),

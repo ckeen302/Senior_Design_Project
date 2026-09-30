@@ -3,7 +3,7 @@ import { useState } from "react";
 import { Pressable, StyleSheet, View } from "react-native";
 import type { SentimentScore, SignalContribution } from "../lib/api";
 import { formatCompactCurrency, formatDay, formatPercent, formatPrice, prettifyName } from "../lib/format";
-import { changeSince, formatPoints, shortRole, type Tone } from "../lib/signal";
+import { changeSince, formatPoints, NEW_POSITION_PCT, shortRole, type Tone } from "../lib/signal";
 import { colors, fonts, gutter, spacing } from "../theme";
 import { AppText } from "./AppText";
 import { Divider, ValuePill } from "./ui";
@@ -26,7 +26,11 @@ function ContributionRow({ row, price }: { row: SignalContribution; price: numbe
   const stake = row.stake_change_pct === null
     ? null
     : buying
-    ? `+${Math.round(row.stake_change_pct)}% stake`
+    ? row.stake_change_pct >= NEW_POSITION_PCT
+      ? "new position"
+      : row.stake_change_pct >= 1000
+      ? "+1,000%+ stake"
+      : `+${Math.round(row.stake_change_pct)}% stake`
     : `sold ${Math.round(row.stake_change_pct)}% of stake`;
   const what = [
     `${buying ? "Bought" : "Sold"} ${formatCompactCurrency(row.total_value)}`,

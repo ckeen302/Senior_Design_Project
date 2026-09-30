@@ -118,7 +118,7 @@ export function SettingsScreen() {
     setRegistering(true);
     setPushMessage(null);
     try {
-      const result = await syncPushToken(userId, { prompt: true });
+      const result = await syncPushToken({ prompt: true });
       if (result.status === "granted") {
         setPushMessage("This device will receive whale alerts.");
         profile.refetch();

@@ -8,7 +8,7 @@ import Constants, { ExecutionEnvironment } from "expo-constants";
 import * as Device from "expo-device";
 import * as Notifications from "expo-notifications";
 import { Platform } from "react-native";
-import { updateProfile } from "./api";
+import { clearProfilePushToken, registerPushToken } from "./api";
 
 export const WHALE_ALERT_CHANNEL_ID = "whale-alerts";
 
@@ -86,19 +86,33 @@ export async function registerForPushNotifications({ prompt }: { prompt: boolean
   }
 }
 
-/** Registers the device and stores its token on the user's profile. */
-export async function syncPushToken(userId: string, options: { prompt: boolean }): Promise<PushRegistration> {
+/** This device's Expo push token, once known. */
+let deviceToken: string | null = null;
+
+/**
+ * Registers the device and stores its token on the signed-in user's profile.
+ * The server also takes the token off any other account that used this
+ * device before, so alerts are never delivered twice or to the wrong person.
+ */
+export async function syncPushToken(options: { prompt: boolean }): Promise<PushRegistration> {
   const result = await registerForPushNotifications(options);
   if (result.status === "granted") {
-    await updateProfile(userId, {
-      expo_push_token: result.token,
-      push_platform: Platform.OS === "ios" ? "ios" : "android",
-    });
+    deviceToken = result.token;
+    await registerPushToken(result.token, Platform.OS === "ios" ? "ios" : "android");
   }
   return result;
 }
 
-/** Stops alerts to this device for the signed-out user. */
+/**
+ * Stops alerts to this device for the signed-out user. The user's other
+ * devices keep theirs: the token is only cleared if it is this device's.
+ */
 export async function clearPushToken(userId: string): Promise<void> {
-  await updateProfile(userId, { expo_push_token: null, push_platform: null });
+  if (!deviceToken) {
+    // Not registered during this launch: look it up without prompting.
+    const result = await registerForPushNotifications({ prompt: false });
+    if (result.status !== "granted") return;
+    deviceToken = result.token;
+  }
+  await clearProfilePushToken(userId, deviceToken);
 }

@@ -50,7 +50,7 @@ describe("generated column mirrors", () => {
   it("stake_change_pct: growth for buys, share of holding sold for sales", () => {
     expect(stakeChangePct("P", 10000, 30000)).toBe(50);
     expect(stakeChangePct("S", 2000, 38000)).toBe(5);
-    expect(stakeChangePct("P", 100, 100)).toBeNull(); // brand-new position
+    expect(stakeChangePct("P", 100, 100)).toBe(9999); // brand-new position
     expect(stakeChangePct("P", 100, null)).toBeNull();
     expect(stakeChangePct("A", 100, 1000)).toBeNull();
   });
@@ -91,6 +91,8 @@ describe("plain-English trades", () => {
     expect(describeTrade({ ...base, transaction_code: "S" }).stakeNote).toBe("Sold 9% of stake");
     expect(describeTrade({ ...base, transaction_code: "P", stake_change_pct: 0.4 }).stakeNote).toBe("+0.4% stake");
     expect(describeTrade({ ...base, transaction_code: "P", stake_change_pct: 0.04 }).stakeNote).toBe("+<0.1% stake");
+    expect(describeTrade({ ...base, transaction_code: "P", stake_change_pct: 9999 }).stakeNote).toBe("New position");
+    expect(describeTrade({ ...base, transaction_code: "P", stake_change_pct: 2500 }).stakeNote).toBe("+1,000+% stake");
     expect(describeTrade({ ...base, transaction_code: "A" }).stakeNote).toBeNull();
     expect(describeTrade({ ...base, transaction_code: "S", is_option_sale: true }).stakeNote).toBeNull();
   });
@@ -102,6 +104,11 @@ describe("plain-English trades", () => {
     ["Director, 10% Owner", "Director"],
     ["10% Owner", "10% owner"],
     ["EVP, General Counsel", "EVP"],
+    ["Executive Vice President, General Counsel", "EVP"],
+    ["Senior Vice President", "SVP"],
+    ["Vice President, Finance", "VP"],
+    ["President", "President"],
+    ["Chairman and President", "President"],
     ["Chief Legal Officer", "Chief Legal Officer"],
     ["See Remarks (Officer)", "Officer"],
     [null, null],
