@@ -1,9 +1,12 @@
 # InsiderPulse
 
 **Real-time SEC Form 4 insider-trading tracker for iOS, Android and web.**
-InsiderPulse turns dense SEC filings into a live "whale watching" feed, a 0–100 Weighted
-Insider Sentiment Index (WISI) per stock, interactive buy-vs-sell charts, live prices and
-push alerts when CEOs/CFOs buy millions of dollars of their own stock.
+InsiderPulse reads every insider filing on SEC EDGAR — the whole US market, not a
+hand-picked list — and separates the trades that mean something (an executive buying
+their own stock on the open market) from the noise (pre-planned 10b5-1 sales, tax sales,
+option cash-outs, stock awards). It shows them as a plain-English live feed, scores every
+stock with an **Insider Signal** that explains itself, charts buying vs. selling, streams
+live prices and pushes an alert when a CEO or CFO buys $1M+ of their own stock.
 
 > Information provided is strictly for educational and analytical purposes and does not
 > constitute investment advice.
@@ -22,36 +25,83 @@ push alerts when CEOs/CFOs buy millions of dollars of their own stock.
 ## Architecture
 
 ```
- pg_cron (every 15 min) ──POST {"mode":"tracked"}──▶ Edge Function: fetch-sec-filings (Deno)
-                                                      │ 1. SEC submissions API (User-Agent, 150 ms spacing)
-                                                      │ 2. Form 4 XML → one row per filing
-                                                      │ 3. UPSERT insider_transactions (accession_number)
-                                                      │ 4. Finnhub market cap, Expo "whale" push alerts
-                                                      ▼
- PostgreSQL ── trigger on_insider_transaction_change ──▶ recalculate_wisi_score() ──▶ sentiment_scores
-      │
+ pg_cron (every 2 min) ──POST {"mode":"auto"}──▶ Edge Function: fetch-sec-filings (Deno)
+                                                  │ one run at a time (database lease), ~100 s budget
+                                                  │ 1. latest   EDGAR latest-filings feed (new Form 4s)
+                                                  │ 2. reparse  rows written by an older parser
+                                                  │ 3. backfill EDGAR daily indexes, 90 days, newest first
+                                                  │ 4. marketcaps Finnhub, companies with recent signal trades
+                                                  │ each filing = 1 SEC request (full submission: header + XML),
+                                                  │ 150 ms apart; issuers are created on the fly
+                                                  ▼
+ PostgreSQL ── trigger on_insider_transaction_change ──▶ recalculate_wisi_score()
+      │                                                    ├─ Insider Signal (company_signal)
+      │                                                    └─ spec WISI            ──▶ sentiment_scores
       └─ Supabase Realtime (insider_transactions, sentiment_scores)
                      │
                      ▼
- Expo app ── Feed (infinite scroll + live inserts) · Signals (WISI leaderboard) · Watchlist
-             Company detail (WISI gauge, buy/sell chart, Finnhub live price) · Settings
+ Expo app ── Feed (key trades, biggest buys) · Signals (buying / selling leaderboards)
+             Company detail (signal gauge, "Why this score", buy/sell chart, live price) · Watchlist · Settings
 ```
 
-### The WISI model
+### What counts as a signal
+
+Every Form 4 is stored (one row per filing), but only **discretionary open-market trades**
+move the score. The parser classifies each filing from its transaction codes, the Rule 10b5-1
+checkbox and the footnotes:
+
+| Trade | Example card | Counts? |
+| --- | --- | --- |
+| Open-market purchase (`P`) | *Bought $2.1M · +35% stake* | **Yes (buy)** |
+| Open-market sale (`S`) the insider chose to make | *Sold $450K · Sold 12% of stake* | **Yes (sell)** |
+| Sale under a pre-scheduled Rule 10b5-1 plan | *Sold $3.7M · 10b5-1 plan · routine* | No |
+| Sale to cover taxes on vesting ("sell to cover") | *Sold $938K to cover taxes* | No |
+| Options exercised and sold in the same filing | *Exercised options, sold $32.2M* | No |
+| Awards, exercises, tax withholding, gifts (`A`, `M`, `F`, `G`, …) | *Received 12,000 shares* | No |
+
+Group members (a fund, its general partner, a director who controls it) often each file a
+Form 4 for the same trade; identical trades (same company, date, shares and price) count once
+and are folded into one feed card.
+
+### The Insider Signal (0–100)
+
+Only discretionary open-market trades of **$10K+** in the **last 90 days** count. Every stock
+starts at 50:
+
+```
+points(insider) = base × role × size × conviction
+  base        +6 for buying, −3 for selling (insiders sell for many reasons, they buy for one)
+  role        CEO / CFO 1.5 · director 1.0 · other officer / 10% owner 0.7 · other 0.5
+  size        log10(recency-weighted $ / 10,000) + 0.5, clamped 0–4   ($100K → 1.5, $1M → 2.5, $10M → 3.5)
+  recency     trades 0–30 days old ×1.0 · 31–60 days ×0.7 · 61–90 days ×0.4
+  conviction  buys growing the holding ≥50% ×1.4, ≥10% ×1.2 · sales of ≥50% of it ×1.4, ≥20% ×1.2, <5% ×0.7
+cluster       +4 per additional buyer (max +12) · −2 per additional seller (max −6)
+score         clamp(50 + Σ points + cluster, 0, 100)
+label         ≥75 Strong buying · ≥58 Buying · ≤25 Strong selling · ≤42 Selling · else Neutral
+              · "No signal" when nothing qualifies
+```
+
+Example: Intel's CEO bought $10.0M on Aug 11 (50 days ago → counts 70%, $7.0M → size 3.35):
+6 × 1.5 × 3.35 = **+30.2**, so INTC scores **80 — Strong buying**. The company screen shows
+exactly this breakdown ("Why this score"), computed by the `company_signal_breakdown` RPC — the
+same function the stored score is built from, so the rows always add up.
+
+### The spec WISI (kept for comparison)
 
 ```
 WISI_i = Σ_j ( V_j · W_role,j / MarketCap_i ) · δ_j        V_j = shares_j × price_j
 ```
 
 * **Role weight** `W_role`: CEO / CFO **1.5** · Director / board **1.0** · 10% owner / officer **0.7** · other **0.5**
-* **Direction** `δ`: open-market purchase `P` **+1** · sale `S` **−1** · awards, exercises, gifts, tax (`A`, `M`, `G`, `F`, …) **0**
-* **Window**: filings from the last 90 days; market cap defaults to $1B until Finnhub supplies it.
-* **Gauge**: `index = 50 + 50·tanh(500·WISI)` → ≥ 60 **Bullish**, ≤ 40 **Bearish**, otherwise **Neutral**
-  (≈ ±4 bps of market cap in net weighted insider flow crosses a threshold).
+* **Direction** `δ`: `P` **+1** · `S` **−1** (planned or not) · everything else **0**; 90-day window.
+* **Gauge**: `index = 50 + 50·tanh(500·WISI)` → ≥ 60 Bullish, ≤ 40 Bearish.
 
-The score is maintained entirely in PostgreSQL: every insert/update/delete on
-`insider_transactions` (and every market-cap change) re-scores the company, and a daily cron
-job rolls the 90-day window forward.
+Dividing by market cap flattens almost every large company to "Neutral", and counting
+10b5-1 / tax sales makes routine selling look bearish — which is why the app leads with the
+Insider Signal and shows the WISI as a secondary "Classic WISI" stat.
+
+Both scores live in PostgreSQL: every insert/update/delete on `insider_transactions` (and every
+market-cap change) re-scores the company, and a daily cron job rolls the 90-day window forward.
 
 ---
 
@@ -68,9 +118,10 @@ src/
   components/                         TradeCard, SentimentGauge, BuySellChart, TickerSearchModal, …
   __tests__/                          Jest unit + component tests
 supabase/
-  migrations/                         Phase 1 schema/RLS · Phase 2 ingestion · Phase 3 WISI · Phase 5 realtime/charts · Phase 6 profiles · seed · cron
+  migrations/                         Phase 1 schema/RLS · Phase 2 ingestion · Phase 3 WISI · Phase 5 realtime/charts ·
+                                      Phase 6 profiles · seed · cron · v2 market-wide + Insider Signal · v2.1 option sales
   functions/fetch-sec-filings/        Edge Function entry point + request validation
-  functions/_shared/                  EDGAR client, Form 4 parser, pipeline, push, Finnhub
+  functions/_shared/                  EDGAR client, Form 4 parser, market-wide + per-ticker pipelines, push, Finnhub
   functions/tests/                    Deno tests with real Form 4 fixtures
   verification/                       Trigger audit (SQL Editor) + automated SQL checks
 scripts/                              verify-db.sh, check-client-secrets.mjs
@@ -99,25 +150,32 @@ npx supabase secrets set --env-file supabase/functions/.env
 npx supabase functions deploy fetch-sec-filings
 ```
 
-Enable the 15-minute schedule by storing the two values the cron job reads (SQL Editor):
+Enable the schedule by storing the two values the cron job reads (SQL Editor):
 
 ```sql
 select vault.create_secret('https://pnxzcywtjucanmwmmvsr.supabase.co', 'insiderpulse_project_url');
 select vault.create_secret('<same value as INGEST_SECRET>',            'insiderpulse_ingest_secret');
 ```
 
-Run the first ingestion immediately instead of waiting for the schedule:
+From then on pg_cron calls the function every 2 minutes in `auto` mode: new filings first,
+then the 90-day backfill (≈ 350 filings per run; the full backfill of ~20,000 filings takes
+2–3 hours and resumes where it left off). To run it by hand:
 
 ```bash
 curl -X POST https://pnxzcywtjucanmwmmvsr.supabase.co/functions/v1/fetch-sec-filings \
-  -H "x-ingest-secret: $INGEST_SECRET" -H "Content-Type: application/json" \
-  -d '{"mode":"tracked","limit":10}'
+  -H "x-ingest-secret: $INGEST_SECRET" -H "Content-Type: application/json" -d '{"mode":"auto"}'
 ```
 
-Each call processes companies least-recently-synced first within a ~100 s budget; repeat it (or let
-cron run) to backfill a year of filings. Other payloads: `{"tickers":["AAPL","TSLA"]}`,
-`{"ciks":["320193"]}`, `{"symbols":["NVDA",1045810]}`; options `limit`, `lookbackDays`,
-`maxCompanies`, `notify`.
+| Payload | What it does |
+| --- | --- |
+| `{"mode":"auto"}` | latest filings → re-parse old rows → backfill → market caps (scheduler) |
+| `{"mode":"latest","maxPages":4}` | only the EDGAR latest-filings feed |
+| `{"mode":"backfill","days":90}` or `{"mode":"backfill","day":"2026-09-15"}` | EDGAR daily indexes |
+| `{"mode":"reparse"}` | upgrade rows written by an older parser version |
+| `{"tickers":["AAPL"]}`, `{"ciks":["320193"]}`, `{"symbols":["NVDA",1045810]}` | one company's last year (also used by the app's "Track" button, max 3 per call for users) |
+
+Market-wide modes hold a database lease, so overlapping runs never double the SEC load;
+a second caller gets `{"skipped": "Another ingestion run is in progress"}`.
 
 > **Auth tip:** hosted projects require email confirmation by default. For quick testing, turn it off
 > under *Authentication → Sign In / Providers → Email*, or confirm via the emailed link.
@@ -143,9 +201,9 @@ npx expo start              # scan the QR code with Expo Go, or press i / a / w
 ## Testing
 
 ```bash
-npm run verify           # TypeScript + Jest (55 tests) + client secret scan
-npm run test:functions   # Deno tests for the Edge Function (38 tests, real SEC fixtures)
-npm run test:db          # migrations + WISI/trigger/RLS checks on a local PostgreSQL
+npm run verify           # TypeScript + Jest (90 tests) + client secret scan
+npm run test:functions   # Deno tests for the Edge Function (57 tests, real SEC fixtures)
+npm run test:db          # migrations + WISI / Insider Signal / trigger / RLS checks on a local PostgreSQL
 ```
 
 CI (`.github/workflows/ci.yml`) runs all three on every pull request.
@@ -173,29 +231,42 @@ CI (`.github/workflows/ci.yml`) runs all three on every pull request.
 ## Design notes
 
 * **One row per Form 4.** The schema keys `insider_transactions` on `accession_number`, so a filing's
-  lines are condensed (like OpenInsider): open-market `P`/`S` lines win over awards/exercises,
-  shares are summed, the price is share-weighted, the date is the latest trade date.
-  Derivative-only filings (RSU/option grants) fall back to the derivative table.
-* **Issuer check.** A company's EDGAR submissions also list Form 4s it filed as a *reporting owner*
-  (e.g. Berkshire Hathaway buying Lennar). Those are skipped for that company and recorded in
-  `ingestion_skipped_filings` so they are never re-downloaded.
-* **Filing time** uses EDGAR's `acceptanceDateTime` (UTC) for accurate "filed 3h ago" labels.
+  lines are condensed (like OpenInsider): discretionary open-market `P`/`S` lines win over routine
+  ones (10b5-1 plan, sell-to-cover), which win over awards/exercises; shares are summed, the price
+  is share-weighted, the date is the latest trade date. Derivative-only filings (RSU/option grants)
+  fall back to the derivative table.
+* **Market-wide ingestion.** Each filing costs one SEC request: the full submission text holds the
+  SEC header (form type, acceptance time in Eastern time, converted to UTC) and the Form 4 XML. The
+  issuer comes from the XML and is created on the fly (ticker from the SEC ticker list, else the
+  filing's trading symbol). Filings are recorded in `processed_filings` so nothing is downloaded
+  twice; `edgar_days` tracks the backfill. The feed's `type=4` filter is a prefix match (it also
+  returns 4/A, 424B2, …), so only exact Form 4 entries are used; amendments are skipped.
+* **Parser versions.** Rows carry `parser_version`. When classification improves, the `reparse`
+  step re-downloads only rows the new parser could classify differently (v3: discretionary sales,
+  to detect option exercise-and-sell).
 * **Security.** RLS on every table: market data is public read-only; watchlists and profiles are
-  owner-only; the SECURITY DEFINER scoring functions are not callable from the API. Sessions are
-  stored in the iOS Keychain / Android Keystore (chunked `expo-secure-store` adapter).
+  owner-only; bookkeeping tables and the SECURITY DEFINER / ingestion functions are not callable
+  from the API (`anon`/`authenticated`). Sessions are stored in the iOS Keychain / Android Keystore
+  (chunked `expo-secure-store` adapter).
 * **Function auth.** `fetch-sec-filings` runs with `verify_jwt = false` and authenticates itself:
   `x-ingest-secret`, the secret/service key, or a signed-in user's token (users may import at most
   3 new tickers per call and never trigger alerts). This works with the new `sb_…` API keys.
 * **Navigation.** The spec's "App Stack (Bottom Tab Navigator)" is a native stack wrapping the
   tabs so Company Detail (which needs a ticker) can be pushed from any tab. React Navigation 7 is
-  used (the current release; same API as v6). A **Signals** tab ranks companies by WISI.
+  used (the current release; same API as v6).
 * **Offline & resilience.** Queries run `offlineFirst`, retry network/408/429/5xx errors with
   exponential backoff, pause while offline and refetch on reconnect. Finnhub rate limits or missing
-  quotes show a status instead of failing; the price socket reconnects with backoff.
+  quotes show a status instead of failing; the price socket reconnects with backoff. Realtime rows
+  older than 3 days (backfill) are not pushed to the top of the feed.
 
 ## Known limitations
 
+* 10b5-1 and sell-to-cover detection reads the checkbox and footnote wording; unusual phrasing can
+  slip through (the card and "Why this score" always show what was counted).
+* Exercise-and-sell is detected within one filing (sale ≤ 110% of the exercised shares).
+* Group filings are matched on identical date, shares and price.
+* Form 4/A amendments are not applied; history starts 90 days back (plus a year for tickers
+  imported with "Track").
 * The Finnhub key ships inside the app because the WebSocket requires it in the URL (as in the
   spec). Keep it on the free tier; rotate it if abused.
-* Form 4 `S` includes sell-to-cover tax sales, which the spec counts as sales.
 * Whale alerts go to every user with alerts enabled; per-watchlist alerts are a natural next step.
