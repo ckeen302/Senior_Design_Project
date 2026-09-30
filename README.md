@@ -261,8 +261,8 @@ CI (`.github/workflows/ci.yml`) runs all three on every pull request.
   job commits after every company (a top-level `DO` block run by pg_cron) and ingestion writes rows in
   company order, so no writer holds many locks for long and two writers can't deadlock. The scoring
   trigger fires only when a column that feeds the scores changes.
-* **Push tokens.** A device's token belongs to the account that signed in on it last
-  (`register_push_token` moves it; a token is unique across profiles), signing out clears it only if
+* **Push tokens.** A device's token belongs to the account that signed in on it last (a trigger
+  takes it off any other profile; a token is unique across profiles), signing out clears it only if
   it is still this device's, and alerts are sent once per device.
 * **Parser versions.** Rows carry `parser_version`. When classification improves, the `reparse`
   step re-downloads only rows the new parser could classify differently (v3: discretionary sales,

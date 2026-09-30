@@ -8,7 +8,7 @@ import Constants, { ExecutionEnvironment } from "expo-constants";
 import * as Device from "expo-device";
 import * as Notifications from "expo-notifications";
 import { Platform } from "react-native";
-import { clearProfilePushToken, registerPushToken } from "./api";
+import { clearProfilePushToken, updateProfile } from "./api";
 
 export const WHALE_ALERT_CHANNEL_ID = "whale-alerts";
 
@@ -90,15 +90,18 @@ export async function registerForPushNotifications({ prompt }: { prompt: boolean
 let deviceToken: string | null = null;
 
 /**
- * Registers the device and stores its token on the signed-in user's profile.
- * The server also takes the token off any other account that used this
- * device before, so alerts are never delivered twice or to the wrong person.
+ * Registers the device and stores its token on the user's profile. The
+ * database takes the token off any other account that used this device
+ * before, so alerts never arrive twice or for the wrong person.
  */
-export async function syncPushToken(options: { prompt: boolean }): Promise<PushRegistration> {
+export async function syncPushToken(userId: string, options: { prompt: boolean }): Promise<PushRegistration> {
   const result = await registerForPushNotifications(options);
   if (result.status === "granted") {
     deviceToken = result.token;
-    await registerPushToken(result.token, Platform.OS === "ios" ? "ios" : "android");
+    await updateProfile(userId, {
+      expo_push_token: result.token,
+      push_platform: Platform.OS === "ios" ? "ios" : "android",
+    });
   }
   return result;
 }

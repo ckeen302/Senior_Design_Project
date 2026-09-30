@@ -325,12 +325,6 @@ export async function fetchProfile(userId: string): Promise<Profile | null> {
   return data;
 }
 
-/** Stores this device's push token on the signed-in user's profile (and takes it off any other). */
-export async function registerPushToken(token: string, platform: "ios" | "android"): Promise<void> {
-  const { error, status } = await supabase.rpc("register_push_token", { p_token: token, p_platform: platform });
-  if (error) throw toApiError(error, status);
-}
-
 /** Clears the user's push token only if it is still this device's. */
 export async function clearProfilePushToken(userId: string, token: string): Promise<void> {
   const { error, status } = await supabase

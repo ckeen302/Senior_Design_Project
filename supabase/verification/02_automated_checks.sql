@@ -563,20 +563,23 @@ begin
   assert not exists (select 1 from public.get_insider_activity(v_co, 60) where buy_value > 1e12),
     'absurd old trade reached the chart';
 
-  -- Push tokens: a device belongs to whoever registered it last, never to two accounts.
+  -- Push tokens: a device belongs to whoever stored its token last, never to two accounts.
   insert into auth.users (id, email) values (alice, 'alice.device@example.com'), (bob, 'bob.device@example.com');
   perform set_config('request.jwt.claims', json_build_object('sub', alice, 'role', 'authenticated')::text, true);
   set local role authenticated;
-  perform public.register_push_token('ExponentPushToken[shared-device]', 'ios');
+  update public.profiles set expo_push_token = 'ExponentPushToken[shared-device]', push_platform = 'ios' where id = alice;
   reset role;
 
   perform set_config('request.jwt.claims', json_build_object('sub', bob, 'role', 'authenticated')::text, true);
   set local role authenticated;
-  perform public.register_push_token('ExponentPushToken[shared-device]', 'android');
+  -- The app upserts its own profile row; the trigger releases the token elsewhere.
+  insert into public.profiles (id, expo_push_token, push_platform)
+  values (bob, 'ExponentPushToken[shared-device]', 'android')
+  on conflict (id) do update set expo_push_token = excluded.expo_push_token, push_platform = excluded.push_platform;
   begin
-    perform public.register_push_token('not a token', 'ios');
+    update public.profiles set expo_push_token = 'not a token' where id = bob;
     raise exception 'invalid push token accepted';
-  exception when invalid_parameter_value then null;
+  exception when check_violation then null;
   end;
   -- Signing out clears the token only while it is still this device's.
   update public.profiles set expo_push_token = null
@@ -588,20 +591,9 @@ begin
     'token not moved to the new account';
   assert (select count(*) from public.profiles where expo_push_token = 'ExponentPushToken[shared-device]') = 1,
     'token stored on two profiles';
-  begin
-    update public.profiles set expo_push_token = 'ExponentPushToken[shared-device]' where id = alice;
-    raise exception 'duplicate push token stored';
-  exception when unique_violation then null;
-  end;
-
-  perform set_config('request.jwt.claims', '', true);
-  set local role anon;
-  begin
-    perform public.register_push_token('ExponentPushToken[anon]', 'ios');
-    raise exception 'anon registered a push token';
-  exception when insufficient_privilege then null;
-  end;
-  reset role;
+  -- The trigger function itself is not callable through the API.
+  assert not has_function_privilege('authenticated', 'public.release_push_token_elsewhere()', 'execute'),
+    'authenticated can execute the push token trigger function';
 
   raise notice 'OK  review fixes';
 end;
