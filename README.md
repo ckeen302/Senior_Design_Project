@@ -213,8 +213,8 @@ npx expo start              # scan the QR code with Expo Go, or press i / a / w
 ## Testing
 
 ```bash
-npm run verify           # TypeScript + Jest (92 tests) + client secret scan
-npm run test:functions   # Deno tests for the Edge Function (58 tests, real SEC fixtures)
+npm run verify           # TypeScript + Jest (105 tests) + client secret scan
+npm run test:functions   # Deno tests for the Edge Function (61 tests, real SEC fixtures)
 npm run test:db          # migrations + WISI / Insider Signal / price checks / trigger / RLS on a local PostgreSQL
 ```
 
