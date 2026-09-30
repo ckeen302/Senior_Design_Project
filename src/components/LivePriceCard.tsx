@@ -44,6 +44,8 @@ export function LivePriceCard({ ticker, price }: { ticker: string; price: LivePr
             </AppText>
             <AppText variant="caption"> today</AppText>
           </View>
+        ) : price.status === "loading" ? (
+          <View style={styles.skeletonLine} />
         ) : (
           <AppText variant="caption">{copy.note ?? "Price change unavailable"}</AppText>
         )}
@@ -62,6 +64,7 @@ export function LivePriceCard({ ticker, price }: { ticker: string; price: LivePr
 const styles = StyleSheet.create({
   block: { gap: 4 },
   skeleton: { width: 148, height: 34, marginVertical: 4, borderRadius: radius.sm, backgroundColor: colors.surfaceRaised },
+  skeletonLine: { width: 120, height: 14, borderRadius: 4, backgroundColor: colors.surfaceRaised },
   row: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", gap: spacing.sm },
   change: { flexDirection: "row", alignItems: "center", gap: 3, flexShrink: 1 },
 });
