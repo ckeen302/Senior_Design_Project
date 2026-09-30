@@ -154,12 +154,22 @@ async function tickerEntryForCik(edgar: EdgarClient, cik: string): Promise<Ticke
   return cikIndex.get(cik);
 }
 
-const NOT_A_TICKER = new Set(["NONE", "NA", "N-A", "NULL", "TBD", "PRIVATE"]);
+const NOT_A_TICKER = new Set(["NONE", "NA", "N-A", "NULL", "TBD", "PRIVATE", "NO", "NOT", "UNLISTED", "UNKNOWN"]);
+const EXCHANGES = new Set(["NYSE", "NASDAQ", "AMEX", "AMERICAN", "OTC", "OTCQB", "OTCQX", "OTCBB", "OTCMKTS", "CBOE", "TSX"]);
 
-/** The first plausible symbol in a Form 4 `issuerTradingSymbol` ("brk.a, brk.b" → "BRK-A"). */
+/**
+ * The first plausible symbol in a Form 4 `issuerTradingSymbol`
+ * ("brk.a, brk.b" → "BRK-A", "NYSE: ABC" → "ABC"). Free text such as
+ * "Not Applicable" or "NO SYMBOL" is not a symbol.
+ */
 export function tickerFromForm4(symbol: string | null): string | null {
-  for (const token of (symbol ?? "").split(/[,;\s]+/)) {
-    const ticker = normalizeTicker(token.replace(/^\$/, "").replace(/\//g, "-"));
+  for (const entry of (symbol ?? "").split(/[,;]+/)) {
+    const words = entry.replace(/:/g, " ").trim().split(/\s+/)
+      .filter((word) => word && !EXCHANGES.has(word.toUpperCase()));
+    if (words.length === 0) continue;
+    // Several words only when every one looks like a symbol ("BRK.A BRK.B"), never prose.
+    if (words.length > 1 && !words.every((word) => /^\$?[A-Z][A-Z0-9.\/-]{0,6}$/.test(word))) continue;
+    const ticker = normalizeTicker(words[0].replace(/^\$/, "").replace(/\//g, "-"));
     if (/^[A-Z][A-Z0-9-]{0,9}$/.test(ticker) && !NOT_A_TICKER.has(ticker)) return ticker;
   }
   return null;
@@ -450,13 +460,20 @@ export async function runMarketIngestion(
   }
 
   if (steps.has("marketcaps") && options.finnhubApiKey && !report.error) {
-    const candidates = await repo.marketCapCandidates(options.marketCapLimit ?? 10);
-    for (const company of candidates) {
-      if (Date.now() >= hardDeadline) break;
-      const cap = await fetchMarketCapUsd(company.ticker, options.finnhubApiKey, options.fetchFn);
-      await repo.recordMarketCap(company.id, cap, now());
-      report.marketCaps.checked++;
-      if (cap) report.marketCaps.updated++;
+    // A failure here must not lose the run: its filings are already recorded
+    // as processed, so the caller still sends their whale alerts.
+    try {
+      const candidates = await repo.marketCapCandidates(options.marketCapLimit ?? 10);
+      for (const company of candidates) {
+        if (Date.now() >= hardDeadline) break;
+        const cap = await fetchMarketCapUsd(company.ticker, options.finnhubApiKey, options.fetchFn);
+        await repo.recordMarketCap(company.id, cap, now());
+        report.marketCaps.checked++;
+        if (cap) report.marketCaps.updated++;
+      }
+    } catch (err) {
+      report.error = `Market caps: ${errorMessage(err)}`;
+      console.error(`[market] ${report.error}`);
     }
   }
 

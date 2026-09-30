@@ -83,7 +83,8 @@ points(insider) = base × role × size × conviction
   role        CEO / CFO 1.5 · director 1.0 · other officer / 10% owner 0.7 · other 0.5
   size        log10(recency-weighted $ / 10,000) + 0.5, clamped 0–4   ($100K → 1.5, $1M → 2.5, $10M → 3.5)
   recency     trades 0–30 days old ×1.0 · 31–60 days ×0.7 · 61–90 days ×0.4
-  conviction  buys growing the holding ≥50% ×1.4, ≥10% ×1.2 · sales of ≥50% of it ×1.4, ≥20% ×1.2, <5% ×0.7
+  conviction  buys opening a position or growing it ≥50% ×1.4, ≥10% ×1.2 ·
+              sales of ≥50% of it ×1.4, ≥20% ×1.2, <5% ×0.7
 cluster       +4 per additional buyer (max +12) · −2 per additional seller (max −6)
 score         clamp(50 + Σ points + cluster, 0, 100)
 label         ≥75 Strong buying · ≥58 Buying · ≤25 Strong selling · ≤42 Selling · else Neutral
@@ -256,9 +257,13 @@ CI (`.github/workflows/ci.yml`) runs all three on every pull request.
   with nothing new; amendments (4/A) are skipped.
 * **Market caps** (spec WISI denominator and a price check) come from Finnhub, 20 companies per run,
   largest trades first; companies Finnhub doesn't know are retried weekly.
-* **Scoring locks.** Re-scoring takes a row lock on the company (not an advisory lock), so the
-  nightly job can re-score any number of companies in one transaction. The scoring trigger fires only
-  when a column that feeds the scores changes.
+* **Scoring locks.** Re-scoring takes a row lock on the company (not an advisory lock). The nightly
+  job commits after every company (a top-level `DO` block run by pg_cron) and ingestion writes rows in
+  company order, so no writer holds many locks for long and two writers can't deadlock. The scoring
+  trigger fires only when a column that feeds the scores changes.
+* **Push tokens.** A device's token belongs to the account that signed in on it last
+  (`register_push_token` moves it; a token is unique across profiles), signing out clears it only if
+  it is still this device's, and alerts are sent once per device.
 * **Parser versions.** Rows carry `parser_version`. When classification improves, the `reparse`
   step re-downloads only rows the new parser could classify differently (v3: discretionary sales,
   to detect option exercise-and-sell).
@@ -289,6 +294,7 @@ CI (`.github/workflows/ci.yml`) runs all three on every pull request.
 * Group filings are matched on identical date, shares and price.
 * Price checks are heuristics: a real trade can be held back (e.g. a huge block at a company whose
   market cap Finnhub doesn't know) and a mistyped one at a company with no other trades can slip through.
+  Trades over 400 days old only get the absolute checks (> $20B, > half the company).
 * Form 4/A amendments are not applied; history starts 90 days back (plus a year for tickers
   imported with "Track").
 * The Finnhub key ships inside the app because the WebSocket requires it in the URL (as in the

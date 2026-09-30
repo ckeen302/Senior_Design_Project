@@ -391,4 +391,29 @@ Deno.test("Form 4 trading symbols are cleaned up", () => {
   assertEquals(tickerFromForm4(""), null);
   assertEquals(tickerFromForm4(null), null);
   assertEquals(tickerFromForm4("123"), null);
+  // Free text is not a ticker.
+  assertEquals(tickerFromForm4("Not Applicable"), null);
+  assertEquals(tickerFromForm4("Not Listed"), null);
+  assertEquals(tickerFromForm4("no symbol"), null);
+  assertEquals(tickerFromForm4("NO SYMBOL"), null);
+  assertEquals(tickerFromForm4("NOT APPLICABLE"), null);
+  assertEquals(tickerFromForm4("unlisted"), null);
+  // Exchange prefixes and lists of symbols.
+  assertEquals(tickerFromForm4("NYSE ABC"), "ABC");
+  assertEquals(tickerFromForm4("NASDAQ: ABCD"), "ABCD");
+  assertEquals(tickerFromForm4("NYSE American: XYZ"), "XYZ");
+  assertEquals(tickerFromForm4("BRK.A BRK.B"), "BRK-A");
+  assertEquals(tickerFromForm4("None, ACME"), "ACME");
+});
+
+Deno.test("a database error while refreshing market caps is reported without losing the run", async () => {
+  const repo = new MemoryMarketRepo();
+  repo.addCompany("LEN", LEN.cik, "Lennar Corp");
+  repo.recordMarketCap = () => Promise.reject(new Error("connection reset"));
+  const { fetchFn } = fakeSec();
+  const report = await run(repo, fetchFn, { steps: ["latest", "marketcaps"], finnhubApiKey: "test" });
+  assertEquals(report.error, "Market caps: connection reset");
+  // The filings of this run are stored and their whale trades still reach the caller.
+  assertEquals(report.outcomes.stored, 2);
+  assert(report.whales.length > 0, "whale trades were dropped");
 });

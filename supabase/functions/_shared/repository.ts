@@ -13,6 +13,8 @@ import type { EdgarDay, IssuerInput, IssuerRecord, MarketRepository, ProcessedFi
 
 const COMPANY_COLUMNS = "id, ticker, cik, company_name, market_cap, market_cap_updated_at, last_synced_at";
 const CHUNK = 100;
+/** Below PostgREST's default max_rows (1,000), so a short page means the end. */
+const RECIPIENT_PAGE = 500;
 
 function chunks<T>(items: T[], size = CHUNK): T[][] {
   const out: T[][] = [];
@@ -114,8 +116,13 @@ export class SupabaseIngestRepository implements IngestRepository, MarketReposit
   }
 
   async upsertTransactions(rows: TransactionInsert[]): Promise<number> {
+    // The scoring trigger locks each row's company. Taking those locks in one
+    // global order (company id) means two writers can never deadlock.
+    const ordered = [...rows].sort((a, b) =>
+      a.company_id < b.company_id ? -1 : a.company_id > b.company_id ? 1 : 0
+    );
     let written = 0;
-    for (const part of chunks(rows)) {
+    for (const part of chunks(ordered)) {
       const { error, count } = await this.db
         .from("insider_transactions")
         .upsert(part, { onConflict: "accession_number", count: "exact" });
@@ -143,15 +150,24 @@ export class SupabaseIngestRepository implements IngestRepository, MarketReposit
   }
 
   async whaleAlertRecipients(): Promise<PushRecipient[]> {
-    const rows = check(
-      await this.db
-        .from("profiles")
-        .select("id, expo_push_token")
-        .eq("whale_alerts_enabled", true)
-        .not("expo_push_token", "is", null),
-      "Loading push recipients",
-    ) as { id: string; expo_push_token: string }[];
-    return rows.map((r) => ({ userId: r.id, token: r.expo_push_token }));
+    // PostgREST caps a response at max_rows (1,000 by default): page through.
+    const byToken = new Map<string, PushRecipient>();
+    for (let from = 0;; from += RECIPIENT_PAGE) {
+      const rows = check(
+        await this.db
+          .from("profiles")
+          .select("id, expo_push_token")
+          .eq("whale_alerts_enabled", true)
+          .not("expo_push_token", "is", null)
+          .order("id")
+          .range(from, from + RECIPIENT_PAGE - 1),
+        "Loading push recipients",
+      ) as { id: string; expo_push_token: string }[];
+      // One message per device, even if a token were ever stored twice.
+      rows.forEach((r) => byToken.set(r.expo_push_token, { userId: r.id, token: r.expo_push_token }));
+      if (rows.length < RECIPIENT_PAGE) break;
+    }
+    return [...byToken.values()];
   }
 
   async clearPushTokens(tokens: string[]): Promise<void> {

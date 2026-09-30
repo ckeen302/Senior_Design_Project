@@ -66,5 +66,9 @@ Deno.test("market-wide modes are scheduler-only and validate their options", () 
   assertEquals(status(() => parseIngestRequest({ mode: "reparse" }, "user")), 403);
   assertEquals(status(() => parseIngestRequest({ mode: "latest", maxPages: 11 }, "service")), 400);
   assertEquals(status(() => parseIngestRequest({ mode: "backfill", day: "15/09/2026" }, "service")), 400);
+  // Impossible dates are rejected here rather than failing later in Postgres.
+  assertEquals(status(() => parseIngestRequest({ mode: "backfill", day: "2026-02-30" }, "service")), 400);
+  assertEquals(status(() => parseIngestRequest({ mode: "backfill", day: "2026-13-01" }, "service")), 400);
+  assertEquals(parseIngestRequest({ mode: "backfill", day: "2028-02-29" }, "service").market?.day, "2028-02-29");
   assertEquals(status(() => parseIngestRequest({ mode: "everything" }, "service")), 400);
 });

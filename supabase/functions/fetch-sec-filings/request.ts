@@ -62,6 +62,13 @@ function intOption(value: unknown, name: string, [fallback, max]: [number, numbe
   return n;
 }
 
+/** A real YYYY-MM-DD date ("2026-02-30" is not; Date.parse would roll it over). */
+export function isCalendarDay(value: string): boolean {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const parsed = new Date(`${value}T00:00:00Z`);
+  return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value;
+}
+
 export function parseIngestRequest(body: unknown, role: CallerRole): IngestRequest {
   if (!body || typeof body !== "object" || Array.isArray(body)) {
     throw new HttpError(400, "Request body must be a JSON object");
@@ -81,7 +88,7 @@ export function parseIngestRequest(body: unknown, role: CallerRole): IngestReque
   if (isMarketMode(mode)) {
     let day: string | null = null;
     if (b.day !== undefined && b.day !== null) {
-      if (typeof b.day !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(b.day) || Number.isNaN(Date.parse(b.day))) {
+      if (typeof b.day !== "string" || !isCalendarDay(b.day)) {
         throw new HttpError(400, '"day" must be a date like "2026-09-15"');
       }
       day = b.day;

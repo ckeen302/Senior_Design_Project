@@ -525,4 +525,86 @@ begin
 end;
 $$;
 
+-- 11. Review fixes: new positions, late filings, push tokens -------------------------
+do $$
+declare
+  v_co  uuid;
+  alice uuid := gen_random_uuid();
+  bob   uuid := gen_random_uuid();
+  b     record;
+begin
+  -- A first purchase (nothing held before) is a new position: conviction x1.4,
+  -- not the x1.0 of a small top-up.
+  insert into public.companies (ticker, cik, company_name, market_cap, market_cap_updated_at)
+  values ('ZZFIRST', '9999999960', 'New Position Co.', 50000000000, now())
+  returning id into v_co;
+  insert into public.insider_transactions
+    (company_id, accession_number, filing_date, transaction_date, reporting_owner_name, insider_cik,
+     owner_title, transaction_code, shares, price_per_share, post_transaction_shares, parser_version)
+  values
+    (v_co, '9999999960-26-000001', now(), current_date - 2, 'First Buyer', '0000000501', 'Director', 'P', 10000, 100, 10000,   3),
+    (v_co, '9999999960-26-000002', now(), current_date - 2, 'Top Up',      '0000000502', 'Director', 'P', 10001, 100, 1010101, 3);
+  assert (select stake_change_pct from public.insider_transactions where accession_number = '9999999960-26-000001') = 9999,
+    'new position not recognised';
+  select * into b from public.company_signal_breakdown(v_co) where insider_name = 'First Buyer';
+  assert b.conviction = 1.4, format('new position conviction %s', b.conviction);
+  select * into b from public.company_signal_breakdown(v_co) where insider_name = 'Top Up';
+  assert b.conviction = 1.0, format('small top-up conviction %s', b.conviction);
+
+  -- A late filing for a 500-day-old trade still gets the absolute price checks.
+  insert into public.insider_transactions
+    (company_id, accession_number, filing_date, transaction_date, reporting_owner_name, insider_cik,
+     owner_title, transaction_code, shares, price_per_share, parser_version)
+  values (v_co, '9999999960-26-000003', now(), current_date - 500, 'Late Filer', '0000000503', 'CEO', 'P', 40000000, 40000000, 3);
+  assert (select price_suspect from public.insider_transactions where accession_number = '9999999960-26-000003'),
+    'absurd trade from 500 days ago not flagged';
+  assert (select signal_direction from public.insider_transactions where accession_number = '9999999960-26-000003') = 0,
+    'absurd old trade counts as a buy (whale alert)';
+  assert not exists (select 1 from public.get_insider_activity(v_co, 60) where buy_value > 1e12),
+    'absurd old trade reached the chart';
+
+  -- Push tokens: a device belongs to whoever registered it last, never to two accounts.
+  insert into auth.users (id, email) values (alice, 'alice.device@example.com'), (bob, 'bob.device@example.com');
+  perform set_config('request.jwt.claims', json_build_object('sub', alice, 'role', 'authenticated')::text, true);
+  set local role authenticated;
+  perform public.register_push_token('ExponentPushToken[shared-device]', 'ios');
+  reset role;
+
+  perform set_config('request.jwt.claims', json_build_object('sub', bob, 'role', 'authenticated')::text, true);
+  set local role authenticated;
+  perform public.register_push_token('ExponentPushToken[shared-device]', 'android');
+  begin
+    perform public.register_push_token('not a token', 'ios');
+    raise exception 'invalid push token accepted';
+  exception when invalid_parameter_value then null;
+  end;
+  -- Signing out clears the token only while it is still this device's.
+  update public.profiles set expo_push_token = null
+   where id = bob and expo_push_token = 'ExponentPushToken[another-device]';
+  reset role;
+
+  assert (select expo_push_token from public.profiles where id = alice) is null, 'token left on the previous account';
+  assert (select expo_push_token from public.profiles where id = bob) = 'ExponentPushToken[shared-device]',
+    'token not moved to the new account';
+  assert (select count(*) from public.profiles where expo_push_token = 'ExponentPushToken[shared-device]') = 1,
+    'token stored on two profiles';
+  begin
+    update public.profiles set expo_push_token = 'ExponentPushToken[shared-device]' where id = alice;
+    raise exception 'duplicate push token stored';
+  exception when unique_violation then null;
+  end;
+
+  perform set_config('request.jwt.claims', '', true);
+  set local role anon;
+  begin
+    perform public.register_push_token('ExponentPushToken[anon]', 'ios');
+    raise exception 'anon registered a push token';
+  exception when insufficient_privilege then null;
+  end;
+  reset role;
+
+  raise notice 'OK  review fixes';
+end;
+$$;
+
 rollback;
