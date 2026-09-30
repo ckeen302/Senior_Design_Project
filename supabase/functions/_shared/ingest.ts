@@ -17,7 +17,7 @@ import {
   type SubmissionsResponse,
 } from "./edgar.ts";
 import { fetchMarketCapUsd } from "./finnhub.ts";
-import { Form4ParseError, parseForm4Xml, summarizeForm4 } from "./form4.ts";
+import { type Form4Summary, Form4ParseError, parseForm4Xml, summarizeForm4 } from "./form4.ts";
 import { isExecutiveTitle } from "./wisi.ts";
 
 export interface CompanyRecord {
@@ -30,18 +30,85 @@ export interface CompanyRecord {
   last_synced_at: string | null;
 }
 
+/** Bumped whenever parsing changes; rows from older versions are re-processed. */
+export const PARSER_VERSION = 2;
+
 export interface TransactionInsert {
   company_id: string;
   accession_number: string;
   filing_date: string;
   transaction_date: string;
   reporting_owner_name: string;
+  insider_cik: string | null;
   owner_title: string | null;
   transaction_code: string;
   shares: number;
   price_per_share: number;
   is_direct: boolean;
   post_transaction_shares: number | null;
+  is_10b5_1: boolean;
+  is_sell_to_cover: boolean;
+  parser_version: number;
+}
+
+export function buildTransactionRow(
+  companyId: string,
+  accessionNumber: string,
+  acceptedAt: string,
+  summary: Form4Summary,
+): TransactionInsert {
+  return {
+    company_id: companyId,
+    accession_number: accessionNumber,
+    filing_date: acceptedAt,
+    transaction_date: summary.transactionDate,
+    reporting_owner_name: summary.reportingOwnerName,
+    insider_cik: summary.insiderCik,
+    owner_title: summary.ownerTitle,
+    transaction_code: summary.transactionCode,
+    shares: summary.shares,
+    price_per_share: summary.pricePerShare,
+    is_direct: summary.isDirect,
+    post_transaction_shares: summary.postTransactionShares,
+    is_10b5_1: summary.isPlanned,
+    is_sell_to_cover: summary.isSellToCover,
+    parser_version: PARSER_VERSION,
+  };
+}
+
+/** Recent, discretionary CEO/CFO open-market purchases worth alerting on. */
+export function findWhaleTrades(
+  rows: TransactionInsert[],
+  companyFor: (companyId: string) => { ticker: string; company_name: string } | undefined,
+  options: { nowMs: number; minValueUsd: number; maxAgeMs: number },
+): WhaleTrade[] {
+  const whales: WhaleTrade[] = [];
+  for (const row of rows) {
+    const value = row.shares * row.price_per_share;
+    const company = companyFor(row.company_id);
+    if (
+      company &&
+      row.transaction_code === "P" &&
+      !row.is_10b5_1 &&
+      isExecutiveTitle(row.owner_title) &&
+      value >= options.minValueUsd &&
+      options.nowMs - Date.parse(row.filing_date) <= options.maxAgeMs
+    ) {
+      whales.push({
+        companyId: row.company_id,
+        ticker: company.ticker,
+        companyName: company.company_name,
+        accessionNumber: row.accession_number,
+        ownerName: row.reporting_owner_name,
+        ownerTitle: row.owner_title,
+        shares: row.shares,
+        pricePerShare: row.price_per_share,
+        totalValue: Math.round(value * 100) / 100,
+        filingDate: row.filing_date,
+      });
+    }
+  }
+  return whales;
 }
 
 export interface IngestRepository {
@@ -207,19 +274,7 @@ function classifyFiling(company: CompanyRecord, filing: FilingRef, xml: string):
   }
   const summary = summarizeForm4(doc, filing.reportDate ?? filing.filingDate);
   if (!summary) return { skip: "no_transactions" };
-  return { row: {
-    company_id: company.id,
-    accession_number: filing.accessionNumber,
-    filing_date: filing.acceptedAt,
-    transaction_date: summary.transactionDate,
-    reporting_owner_name: summary.reportingOwnerName,
-    owner_title: summary.ownerTitle,
-    transaction_code: summary.transactionCode,
-    shares: summary.shares,
-    price_per_share: summary.pricePerShare,
-    is_direct: summary.isDirect,
-    post_transaction_shares: summary.postTransactionShares,
-  } };
+  return { row: buildTransactionRow(company.id, filing.accessionNumber, filing.acceptedAt, summary) };
 }
 
 export async function runIngestion(
@@ -315,28 +370,9 @@ export async function runIngestion(
       report.remaining = pending.length - attempted;
 
       const nowMs = now().getTime();
-      for (const row of rows) {
-        const value = row.shares * row.price_per_share;
-        if (
-          row.transaction_code === "P" &&
-          isExecutiveTitle(row.owner_title) &&
-          value >= whaleMin &&
-          nowMs - Date.parse(row.filing_date) <= whaleMaxAgeMs
-        ) {
-          whales.push({
-            companyId: company.id,
-            ticker: company.ticker,
-            companyName: company.company_name,
-            accessionNumber: row.accession_number,
-            ownerName: row.reporting_owner_name,
-            ownerTitle: row.owner_title,
-            shares: row.shares,
-            pricePerShare: row.price_per_share,
-            totalValue: Math.round(value * 100) / 100,
-            filingDate: row.filing_date,
-          });
-        }
-      }
+      whales.push(
+        ...findWhaleTrades(rows, () => company, { nowMs, minValueUsd: whaleMin, maxAgeMs: whaleMaxAgeMs }),
+      );
 
       if (options.finnhubApiKey) {
         const updatedAt = company.market_cap_updated_at ? Date.parse(company.market_cap_updated_at) : 0;

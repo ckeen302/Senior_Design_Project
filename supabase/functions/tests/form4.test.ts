@@ -31,6 +31,7 @@ Deno.test("parses issuer, owners and every transaction line", () => {
 Deno.test("CFO sell-to-cover: the open-market sale outranks the exercise", () => {
   assertEquals(summarize("0001104659-26-106432"), {
     reportingOwnerName: "Taneja Vaibhav",
+    insiderCik: "0001771340",
     ownerTitle: "Chief Financial Officer",
     transactionCode: "S",
     shares: 2605.75,
@@ -39,6 +40,8 @@ Deno.test("CFO sell-to-cover: the open-market sale outranks the exercise", () =>
     transactionDate: "2026-09-08",
     isDirect: true,
     postTransactionShares: 25972.25,
+    isPlanned: false,
+    isSellToCover: true, // footnote: shares sold to cover tax withholding
     lineCount: 1,
   });
 });
@@ -153,4 +156,87 @@ Deno.test("owner titles: officers without a recognisable title are marked", () =
   assertEquals(describeOwnerTitle([{ ...base, officerTitle: "Head of Retail" }]), "Head of Retail (Officer)");
   assertEquals(describeOwnerTitle([{ ...base, isOfficer: false, isOther: true, otherText: "Former director" }]), "Former director");
   assertEquals(describeOwnerTitle([{ ...base, isOfficer: false }]), null);
+});
+
+Deno.test("Rule 10b5-1 plan sales are flagged as planned (footnote or checkbox)", () => {
+  const avgo = summarize("0001104659-26-110983")!; // Broadcom director, $250M under a 10b5-1 plan
+  assertEquals([avgo.transactionCode, avgo.isPlanned, avgo.isSellToCover], ["S", true, false]);
+  const rgen = summarize("0001628280-26-063572")!; // Repligen CEO, exercise-and-sell under a plan
+  assertEquals([rgen.transactionCode, rgen.isPlanned], ["S", true]);
+  assertEquals(parseForm4Xml(fixture("0001628280-26-063572")).rule10b5One, true);
+});
+
+Deno.test("discretionary open-market trades are not flagged", () => {
+  for (const [accession, code] of [
+    ["0001193125-26-403089", "P"], // Berkshire buying Lennar
+    ["0001104659-26-110960", "S"], // Redwire director sale
+    ["0001180645-26-000001", "P"], // DHF director purchase
+  ]) {
+    const s = summarize(accession)!;
+    assertEquals([s.transactionCode, s.isPlanned, s.isSellToCover], [code, false, false], accession);
+  }
+});
+
+const plannedXml = (footnote: string, opts: { checkbox?: boolean; ref?: boolean } = {}) => `<?xml version="1.0"?>
+<ownershipDocument>
+  <documentType>4</documentType>
+  <periodOfReport>2026-09-01</periodOfReport>
+  ${opts.checkbox ? "<aff10b5One>1</aff10b5One>" : ""}
+  <issuer><issuerCik>0000000001</issuerCik><issuerName>Test Co</issuerName><issuerTradingSymbol>TST</issuerTradingSymbol></issuer>
+  <reportingOwner>
+    <reportingOwnerId><rptOwnerCik>2</rptOwnerCik><rptOwnerName>Roe Richard</rptOwnerName></reportingOwnerId>
+    <reportingOwnerRelationship><isOfficer>1</isOfficer><officerTitle>CFO</officerTitle></reportingOwnerRelationship>
+  </reportingOwner>
+  <nonDerivativeTable>
+    <nonDerivativeTransaction>
+      <securityTitle><value>Common Stock</value></securityTitle>
+      <transactionDate><value>2026-09-01</value></transactionDate>
+      <transactionCoding><transactionCode>S</transactionCode>${opts.ref === false ? "" : '<footnoteId id="F1"/>'}</transactionCoding>
+      <transactionAmounts>
+        <transactionShares><value>1000</value></transactionShares>
+        <transactionPricePerShare><value>50</value></transactionPricePerShare>
+        <transactionAcquiredDisposedCode><value>D</value></transactionAcquiredDisposedCode>
+      </transactionAmounts>
+      <postTransactionAmounts><sharesOwnedFollowingTransaction><value>9000</value></sharesOwnedFollowingTransaction></postTransactionAmounts>
+      <ownershipNature><directOrIndirectOwnership><value>D</value></directOrIndirectOwnership></ownershipNature>
+    </nonDerivativeTransaction>
+  </nonDerivativeTable>
+  <footnotes><footnote id="F1">${footnote}</footnote></footnotes>
+</ownershipDocument>`;
+
+Deno.test("footnote wording decides planned vs. sell-to-cover", () => {
+  const flags = (xml: string) => {
+    const s = summarizeForm4(parseForm4Xml(xml))!;
+    return [s.isPlanned, s.isSellToCover];
+  };
+  assertEquals(flags(plannedXml("Effected pursuant to a Rule 10b5-1 trading plan adopted on May 1, 2026.")), [true, false]);
+  assertEquals(flags(plannedXml("Sold pursuant to a 10b5\u20111 plan.")), [true, false]); // unicode hyphen
+  assertEquals(
+    flags(plannedXml("Represents shares sold to satisfy tax withholding obligations upon vesting of RSUs.")),
+    [false, true],
+  );
+  assertEquals(flags(plannedXml("Shares sold in a sell-to-cover transaction.")), [false, true]);
+  assertEquals(flags(plannedXml("The price reported is a weighted average price.")), [false, false]);
+  // The filing-level checkbox marks unreferenced buy/sell lines as planned.
+  assertEquals(flags(plannedXml("Weighted average price.", { checkbox: true, ref: false })), [true, false]);
+});
+
+Deno.test("routine sales lose to a discretionary sale in the same filing", () => {
+  const xml = plannedXml("Shares withheld to cover taxes.").replace(
+    "</nonDerivativeTable>",
+    `<nonDerivativeTransaction>
+      <securityTitle><value>Common Stock</value></securityTitle>
+      <transactionDate><value>2026-09-02</value></transactionDate>
+      <transactionCoding><transactionCode>S</transactionCode></transactionCoding>
+      <transactionAmounts>
+        <transactionShares><value>100</value></transactionShares>
+        <transactionPricePerShare><value>51</value></transactionPricePerShare>
+        <transactionAcquiredDisposedCode><value>D</value></transactionAcquiredDisposedCode>
+      </transactionAmounts>
+      <postTransactionAmounts><sharesOwnedFollowingTransaction><value>8900</value></sharesOwnedFollowingTransaction></postTransactionAmounts>
+      <ownershipNature><directOrIndirectOwnership><value>D</value></directOrIndirectOwnership></ownershipNature>
+    </nonDerivativeTransaction></nonDerivativeTable>`,
+  );
+  const s = summarizeForm4(parseForm4Xml(xml))!;
+  assertEquals([s.shares, s.pricePerShare, s.isSellToCover, s.isPlanned], [100, 51, false, false]);
 });

@@ -9,9 +9,10 @@
  *   1. Use non-derivative (common stock) transactions; fall back to the
  *      derivative table only when a filing has no non-derivative transactions
  *      (e.g. RSU / option grants).
- *   2. Group by transaction code. Open-market purchases (P) and sales (S) take
- *      precedence because they drive the WISI; otherwise the code with the
- *      largest dollar value (then share count) wins.
+ *   2. Classify every line: discretionary open-market purchases (P) and sales
+ *      (S) carry the insider signal; pre-scheduled Rule 10b5-1 plan trades and
+ *      sell-to-cover tax sales are routine. Discretionary P/S lines win, then
+ *      routine P/S lines, then any other code with the largest dollar value.
  *   3. Shares are summed, the price is the share-weighted average, the date is
  *      the latest transaction date, and holdings are taken from the last line.
  */
@@ -40,6 +41,10 @@ export interface Form4Transaction {
   acquiredDisposed: "A" | "D" | null;
   sharesOwnedAfter: number | null;
   directOrIndirect: "D" | "I" | null;
+  /** Executed under a pre-scheduled Rule 10b5-1 trading plan. */
+  planned: boolean;
+  /** A sale made to cover tax withholding on vesting / exercise ("sell to cover"). */
+  sellToCover: boolean;
 }
 
 export interface Form4Document {
@@ -48,10 +53,14 @@ export interface Form4Document {
   issuer: { cik: string | null; name: string | null; ticker: string | null };
   owners: Form4Owner[];
   transactions: Form4Transaction[];
+  /** The filing's Rule 10b5-1 checkbox (added to Form 4 in 2023). */
+  rule10b5One: boolean;
 }
 
 export interface Form4Summary {
   reportingOwnerName: string;
+  /** CIK of the (first) reporting owner, zero-padded. */
+  insiderCik: string | null;
   ownerTitle: string | null;
   transactionCode: string;
   shares: number;
@@ -60,6 +69,8 @@ export interface Form4Summary {
   transactionDate: string;
   isDirect: boolean;
   postTransactionShares: number | null;
+  isPlanned: boolean;
+  isSellToCover: boolean;
   /** Number of filing lines condensed into this summary. */
   lineCount: number;
 }
@@ -70,12 +81,18 @@ const ARRAY_TAGS = new Set([
   "nonDerivativeHolding",
   "derivativeTransaction",
   "derivativeHolding",
+  "footnote",
+  "footnoteId",
 ]);
 
 const parser = new XMLParser({
-  ignoreAttributes: true,
+  // Attributes are needed for <footnoteId id="F1"/> references.
+  ignoreAttributes: false,
+  attributeNamePrefix: "@_",
+  textNodeName: "#text",
   // Keep every value as a string: CIKs have significant leading zeros.
   parseTagValue: false,
+  parseAttributeValue: false,
   trimValues: true,
   processEntities: true,
   isArray: (name: string) => ARRAY_TAGS.has(name),
@@ -91,14 +108,27 @@ export class Form4ParseError extends Error {
   }
 }
 
-/** Reads `<tag><value>x</value></tag>` or `<tag>x</tag>`. */
+const PLANNED_PATTERN = /10b5-?\s?1|10b-5-?1|\btrading plan\b/;
+const SELL_TO_COVER_PATTERN =
+  /sell[- ]to[- ]cover|sold to cover|to cover (the |any |applicable )*(tax|withholding)|tax withholding|withholding (tax )?obligation|(satisfy|cover|pay) [a-z0-9' ,-]{0,60}(tax|withholding)|withheld [a-z0-9' ,-]{0,60}tax/;
+
+/** Lower-cases and normalises unicode dashes / whitespace for pattern checks. */
+function normalizeNote(text: string): string {
+  return text.toLowerCase().replace(/[‐-―−]/g, "-").replace(/\s+/g, " ");
+}
+
+/** Reads `<tag><value>x</value></tag>`, `<tag>x</tag>` or `<tag attr="">x</tag>`. */
 function text(node: XmlNode): string | null {
   if (node === undefined || node === null) return null;
   if (typeof node === "string" || typeof node === "number") {
     const s = String(node).trim();
     return s === "" ? null : s;
   }
-  if (typeof node === "object" && "value" in node) return text(node.value);
+  if (Array.isArray(node)) return text(node[0]);
+  if (typeof node === "object") {
+    if ("value" in node) return text(node.value);
+    if ("#text" in node) return text(node["#text"]);
+  }
   return null;
 }
 
@@ -125,12 +155,37 @@ function isoDate(s: string | null): string | null {
   return m ? m[1] : null;
 }
 
-function parseTransaction(node: XmlNode, table: Form4Transaction["table"]): Form4Transaction | null {
+/** Every footnote id referenced anywhere inside a transaction element. */
+function footnoteRefs(node: XmlNode, out = new Set<string>()): Set<string> {
+  if (!node || typeof node !== "object") return out;
+  if (Array.isArray(node)) {
+    node.forEach((child) => footnoteRefs(child, out));
+    return out;
+  }
+  for (const [key, value] of Object.entries(node)) {
+    if (key === "footnoteId") {
+      for (const ref of asArray(value as XmlNode)) {
+        const id = typeof ref === "object" && ref ? ref["@_id"] : null;
+        if (id) out.add(String(id));
+      }
+    } else if (typeof value === "object") {
+      footnoteRefs(value, out);
+    }
+  }
+  return out;
+}
+
+function parseTransaction(
+  node: XmlNode,
+  table: Form4Transaction["table"],
+  notes: Map<string, string>,
+): Form4Transaction | null {
   const code = text(node?.transactionCoding?.transactionCode)?.toUpperCase();
   if (!code) return null;
   const amounts = node?.transactionAmounts ?? {};
   const ad = text(amounts.transactionAcquiredDisposedCode)?.toUpperCase();
   const di = text(node?.ownershipNature?.directOrIndirectOwnership)?.toUpperCase();
+  const refs = [...footnoteRefs(node)].map((id) => notes.get(id) ?? "");
   return {
     table,
     securityTitle: text(node?.securityTitle),
@@ -141,6 +196,8 @@ function parseTransaction(node: XmlNode, table: Form4Transaction["table"]): Form
     acquiredDisposed: ad === "A" || ad === "D" ? ad : null,
     sharesOwnedAfter: num(node?.postTransactionAmounts?.sharesOwnedFollowingTransaction),
     directOrIndirect: di === "D" || di === "I" ? di : null,
+    planned: refs.some((note) => PLANNED_PATTERN.test(note)),
+    sellToCover: code === "S" && refs.some((note) => SELL_TO_COVER_PATTERN.test(note)),
   };
 }
 
@@ -155,6 +212,12 @@ export function parseForm4Xml(xml: string): Form4Document {
   const doc = parsed?.ownershipDocument;
   if (!doc || typeof doc !== "object") {
     throw new Form4ParseError("Missing <ownershipDocument> root element");
+  }
+
+  const notes = new Map<string, string>();
+  for (const note of asArray(doc.footnotes?.footnote)) {
+    const id = typeof note === "object" && note ? note["@_id"] : null;
+    if (id) notes.set(String(id), normalizeNote(text(note) ?? ""));
   }
 
   const owners: Form4Owner[] = asArray(doc.reportingOwner).map((o: XmlNode) => {
@@ -173,10 +236,21 @@ export function parseForm4Xml(xml: string): Form4Document {
 
   const transactions: Form4Transaction[] = [
     ...asArray(doc.nonDerivativeTable?.nonDerivativeTransaction).map((t: XmlNode) =>
-      parseTransaction(t, "nonDerivative")
+      parseTransaction(t, "nonDerivative", notes)
     ),
-    ...asArray(doc.derivativeTable?.derivativeTransaction).map((t: XmlNode) => parseTransaction(t, "derivative")),
+    ...asArray(doc.derivativeTable?.derivativeTransaction).map((t: XmlNode) =>
+      parseTransaction(t, "derivative", notes)
+    ),
   ].filter((t): t is Form4Transaction => t !== null);
+
+  // The 10b5-1 checkbox (or remarks) applies to the whole filing. When no
+  // footnote says which lines were planned, treat its buys/sells as planned.
+  const remarks = normalizeNote(text(doc.remarks) ?? "");
+  const rule10b5One = flag(doc.aff10b5One) || PLANNED_PATTERN.test(remarks);
+  const marketLines = transactions.filter((t) => t.code === "P" || t.code === "S");
+  if (rule10b5One && !marketLines.some((t) => t.planned)) {
+    marketLines.forEach((t) => (t.planned = true));
+  }
 
   return {
     documentType: text(doc.documentType),
@@ -188,6 +262,7 @@ export function parseForm4Xml(xml: string): Form4Document {
     },
     owners,
     transactions,
+    rule10b5One,
   };
 }
 
@@ -228,6 +303,11 @@ const round = (n: number, digits: number) => {
   return Math.round(n * f) / f;
 };
 
+function padCik(cik: string | null): string | null {
+  const digits = cik?.replace(/\D/g, "");
+  return digits && digits.length <= 10 ? digits.padStart(10, "0") : null;
+}
+
 /** Condenses a parsed filing into one transaction row, or null if it reports no transactions. */
 export function summarizeForm4(doc: Form4Document, fallbackDate?: string | null): Form4Summary | null {
   const nonDerivative = doc.transactions.filter((t) => t.table === "nonDerivative");
@@ -238,23 +318,27 @@ export function summarizeForm4(doc: Form4Document, fallbackDate?: string | null)
 
   const groups = new Map<string, Form4Transaction[]>();
   for (const t of candidates) {
-    const g = groups.get(t.code);
+    const key = `${t.code}|${t.planned}|${t.sellToCover}`;
+    const g = groups.get(key);
     if (g) g.push(t);
-    else groups.set(t.code, [t]);
+    else groups.set(key, [t]);
   }
 
-  const stats = [...groups.entries()].map(([code, lines]) => ({
-    code,
-    lines,
-    shares: lines.reduce((s, t) => s + t.shares, 0),
-    value: lines.reduce((s, t) => s + t.shares * t.pricePerShare, 0),
-    openMarket: code === "P" || code === "S",
-  }));
-  stats.sort((a, b) =>
-    Number(b.openMarket) - Number(a.openMarket) ||
-    b.value - a.value ||
-    b.shares - a.shares
-  );
+  const stats = [...groups.values()].map((lines) => {
+    const { code, planned, sellToCover } = lines[0];
+    const openMarket = code === "P" || code === "S";
+    return {
+      code,
+      lines,
+      planned,
+      sellToCover,
+      // 0 = discretionary buy/sell, 1 = routine buy/sell, 2 = anything else
+      tier: openMarket ? (planned || sellToCover ? 1 : 0) : 2,
+      shares: lines.reduce((s, t) => s + t.shares, 0),
+      value: lines.reduce((s, t) => s + t.shares * t.pricePerShare, 0),
+    };
+  });
+  stats.sort((a, b) => a.tier - b.tier || b.value - a.value || b.shares - a.shares);
   const primary = stats[0];
 
   const pricePerShare = primary.shares > 0 ? primary.value / primary.shares : 0;
@@ -270,6 +354,7 @@ export function summarizeForm4(doc: Form4Document, fallbackDate?: string | null)
 
   return {
     reportingOwnerName: describeOwnerNames(doc.owners),
+    insiderCik: padCik(doc.owners[0]?.cik ?? null),
     ownerTitle: describeOwnerTitle(doc.owners),
     transactionCode: primary.code,
     shares: round(primary.shares, 4),
@@ -278,6 +363,8 @@ export function summarizeForm4(doc: Form4Document, fallbackDate?: string | null)
     transactionDate,
     isDirect: directShares * 2 >= primary.shares,
     postTransactionShares: lastLine.sharesOwnedAfter,
+    isPlanned: primary.planned,
+    isSellToCover: primary.sellToCover,
     lineCount: primary.lines.length,
   };
 }

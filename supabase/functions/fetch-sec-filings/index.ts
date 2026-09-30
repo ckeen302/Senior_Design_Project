@@ -7,6 +7,12 @@
  *   {"mode": "tracked"}                                  every company in the DB
  *   optional: "limit" (new filings per company), "lookbackDays", "maxCompanies", "notify"
  *
+ *   Whole market (scheduler only; one run at a time via a database lease):
+ *   {"mode": "auto"}       latest filings → re-parse old rows → 90-day backfill → market caps
+ *   {"mode": "latest"}     the EDGAR latest-filings feed ("maxPages", default 4)
+ *   {"mode": "backfill"}   EDGAR daily indexes ("days", default 90, or one "day": "2026-09-15")
+ *   {"mode": "reparse"}    rows written by an older parser version
+ *
  * Authorisation (the function is deployed with verify_jwt = false):
  *   * scheduler / admin: `x-ingest-secret: $INGEST_SECRET`, or the service role /
  *     secret API key as `Authorization: Bearer …` or `apikey: …`
@@ -26,9 +32,10 @@ import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { EdgarClient } from "../_shared/edgar.ts";
 import { corsHeaders, HttpError, json, timingSafeEqual } from "../_shared/http.ts";
 import { type IngestTarget, runIngestion, type WhaleTrade } from "../_shared/ingest.ts";
+import { type MarketStep, runMarketIngestion } from "../_shared/market.ts";
 import { sendExpoPushNotifications } from "../_shared/push.ts";
 import { SupabaseIngestRepository } from "../_shared/repository.ts";
-import { type CallerRole, parseIngestRequest } from "./request.ts";
+import { type CallerRole, isMarketMode, type MarketMode, parseIngestRequest } from "./request.ts";
 
 interface Config {
   supabaseUrl: string;
@@ -43,7 +50,15 @@ interface Config {
 
 const SERVICE_TIME_BUDGET_MS = 100_000; // stay well inside the 150 s Edge Function limit
 const USER_TIME_BUDGET_MS = 25_000;
+const MARKET_CAP_RESERVE_MS = 8_000;
 const MAX_WHALE_ALERTS_PER_RUN = 5;
+
+const MARKET_STEPS: Record<MarketMode, MarketStep[]> = {
+  auto: ["latest", "reparse", "backfill", "marketcaps"],
+  latest: ["latest"],
+  backfill: ["backfill"],
+  reparse: ["reparse"],
+};
 
 const env = (name: string) => {
   const value = Deno.env.get(name)?.trim();
@@ -189,6 +204,51 @@ Deno.serve(async (req) => {
 
     const repo = new SupabaseIngestRepository(admin);
     const edgar = new EdgarClient({ userAgent: config.secUserAgent });
+
+    if (isMarketMode(request.mode) && request.market) {
+      const holder = crypto.randomUUID();
+      const leaseSeconds = Math.ceil(SERVICE_TIME_BUDGET_MS / 1000) + 30;
+      if (!(await repo.claimLease(holder, leaseSeconds))) {
+        return json({ success: true, mode: request.mode, skipped: "Another ingestion run is in progress" });
+      }
+      try {
+        const report = await runMarketIngestion({ edgar, repo }, {
+          steps: MARKET_STEPS[request.mode],
+          deadline: startedAt + SERVICE_TIME_BUDGET_MS - MARKET_CAP_RESERVE_MS,
+          hardDeadline: startedAt + SERVICE_TIME_BUDGET_MS,
+          latestMaxPages: request.market.maxPages,
+          backfillDays: request.market.days,
+          backfillDay: request.market.day ?? undefined,
+          finnhubApiKey: config.finnhubApiKey,
+          whaleMinValueUsd: config.whaleMinValueUsd,
+        });
+        const notifications = request.notify && report.whales.length > 0
+          ? await sendWhaleAlerts(report.whales, repo, config)
+          : null;
+        const durationMs = Date.now() - startedAt;
+        console.log(
+          `[fetch-sec-filings] mode=${request.mode} latest=${report.latest.processed}/${report.latest.pending} ` +
+            `reparse=${report.reparse.processed} backfillDays=${report.backfill.days.length} ` +
+            `stored=${report.outcomes.stored} upserted=${report.transactionsUpserted} failed=${report.outcomes.failed} ` +
+            `secRequests=${report.secRequests} whales=${report.whales.length} durationMs=${durationMs}` +
+            (report.error ? ` error=${report.error}` : ""),
+        );
+        return json({
+          success: !report.error,
+          mode: request.mode,
+          caller: caller.role,
+          durationMs,
+          ...report,
+          whales: undefined,
+          whaleTrades: report.whales,
+          notifications,
+        }, report.error ? 502 : 200);
+      } finally {
+        await repo.releaseLease(holder).catch((err) =>
+          console.error(`[fetch-sec-filings] releasing the lease failed: ${(err as Error).message}`)
+        );
+      }
+    }
 
     const targets: IngestTarget[] = request.mode === "tracked"
       ? (await repo.listCompaniesForSync(request.maxCompanies)).map((company) => ({ kind: "company", company }))

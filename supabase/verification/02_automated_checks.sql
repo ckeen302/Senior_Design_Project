@@ -112,18 +112,21 @@ begin
 
   insert into public.insider_transactions
     (company_id, accession_number, filing_date, transaction_date,
-     reporting_owner_name, owner_title, transaction_code, shares, price_per_share)
+     reporting_owner_name, owner_title, transaction_code, shares, price_per_share,
+     is_10b5_1, parser_version)
   values
-    (v_company, '9999999998-26-000001', now(), current_date, 'A', 'CEO',      'P', 1000, 10),
-    (v_company, '9999999998-26-000002', now(), current_date, 'B', 'Director', 'S', 500,  20),
-    (v_company, '9999999998-26-000003', now(), current_date, 'C', 'Director', 'A', 999,  0),
+    (v_company, '9999999998-26-000001', now(), current_date, 'A', 'CEO',      'P', 1000, 10, false, 2),
+    (v_company, '9999999998-26-000002', now(), current_date, 'B', 'Director', 'S', 500,  20, false, 2),
+    (v_company, '9999999998-26-000003', now(), current_date, 'C', 'Director', 'A', 999,  0,  false, 2),
     (v_company, '9999999998-26-000004', now(), (date_trunc('month', current_date) - interval '2 months')::date,
-     'D', 'CFO', 'P', 100, 30);
+     'D', 'CFO', 'P', 100, 30, false, 2),
+    (v_company, '9999999998-26-000005', now(), current_date, 'E', 'CFO',      'S', 100,  50, true,  2);
 
   for r in select * from public.get_insider_activity(v_company, 12) loop
     n := n + 1;
     if r.period_start = date_trunc('month', current_date)::date then
-      assert r.buy_value = 10000 and r.sell_value = 10000 and r.buy_count = 1 and r.sell_count = 1,
+      assert r.buy_value = 10000 and r.sell_value = 10000 and r.buy_count = 1 and r.sell_count = 1
+             and r.routine_sell_value = 5000 and r.routine_sell_count = 1,
         format('current month totals wrong: %s', row_to_json(r));
     elsif r.period_start = (date_trunc('month', current_date) - interval '2 months')::date then
       assert r.buy_value = 3000 and r.sell_value = 0, format('two-months-ago totals wrong: %s', row_to_json(r));
@@ -228,6 +231,23 @@ begin
     raise exception 'anon executed recalculate_wisi_score';
   exception when insufficient_privilege then null;
   end;
+  begin
+    perform 1 from public.processed_filings limit 1;
+    raise exception 'anon read processed_filings';
+  exception when insufficient_privilege then null;
+  end;
+  begin
+    perform public.claim_ingestion_lease('sec', 'anon', 60);
+    raise exception 'anon claimed the ingestion lease';
+  exception when insufficient_privilege then null;
+  end;
+  begin
+    perform public.ensure_companies('[]'::jsonb);
+    raise exception 'anon executed ensure_companies';
+  exception when insufficient_privilege then null;
+  end;
+  perform 1 from public.company_signal_breakdown(company);
+  perform 1 from public.company_signal(company);
   reset role;
 
   -- Alice's watchlist row really exists (checked as the table owner).
@@ -259,6 +279,171 @@ begin
   exception when check_violation then null;
   end;
   raise notice 'OK  constraints';
+end;
+$$;
+
+-- 8. Insider Signal -------------------------------------------------------------
+do $$
+declare
+  v_company uuid;
+  v_quiet   uuid;
+  v_sellers uuid;
+  s         record;
+  b         record;
+  total     numeric;
+begin
+  insert into public.companies (ticker, cik, company_name) values ('ZZSIG', '9999999990', 'Signal Co.')
+  returning id into v_company;
+
+  insert into public.insider_transactions
+    (company_id, accession_number, filing_date, transaction_date, reporting_owner_name, insider_cik,
+     owner_title, transaction_code, shares, price_per_share, post_transaction_shares,
+     is_10b5_1, is_sell_to_cover, parser_version)
+  values
+    -- CEO buys $1M, growing the holding 50%: 6 x 1.5 x 2.5 x 1.4 = +31.5
+    (v_company, '9999999990-26-000001', now(), current_date - 5,   'Alice',  '0000000101', 'Chief Executive Officer', 'P', 10000, 100, 30000, false, false, 2),
+    -- Director buys $100k 40 days ago (x0.7 = $70k): 6 x 1.0 x 1.35 x 1.0 = +8.1
+    (v_company, '9999999990-26-000002', now(), current_date - 40,  'Bob',    '0000000102', 'Director',                'P', 1000,  100, null,  false, false, 2),
+    -- 10b5-1 plan sale and a sell-to-cover sale: ignored
+    (v_company, '9999999990-26-000003', now(), current_date - 3,   'Carol',  '0000000103', 'CFO',                     'S', 5000,  100, 1000,  true,  false, 2),
+    (v_company, '9999999990-26-000004', now(), current_date - 3,   'Dan',    '0000000104', 'EVP',                     'S', 5000,  100, 1000,  false, true,  2),
+    -- SVP sells $200k = 5% of the holding: -3 x 0.7 x 1.80 x 1.0 = -3.8
+    (v_company, '9999999990-26-000005', now(), current_date - 10,  'Eve',    '0000000105', 'SVP, Sales',              'S', 2000,  100, 38000, false, false, 2),
+    -- too small, too old, not open-market, parsed by v1: ignored
+    (v_company, '9999999990-26-000006', now(), current_date - 1,   'Frank',  '0000000106', 'Director',                'P', 50,    100, null,  false, false, 2),
+    (v_company, '9999999990-26-000007', now(), current_date - 100, 'George', '0000000107', 'Director',                'P', 5000,  100, null,  false, false, 2),
+    (v_company, '9999999990-26-000008', now(), current_date - 2,   'Alice',  '0000000101', 'Chief Executive Officer', 'A', 9999,  0,   null,  false, false, 2),
+    (v_company, '9999999990-26-000009', now(), current_date - 2,   'Hank',   '0000000108', 'Director',                'P', 9999,  100, null,  false, false, 1);
+
+  -- Generated columns.
+  assert (select signal_direction from public.insider_transactions where accession_number = '9999999990-26-000001') = 1,  'discretionary buy should be +1';
+  assert (select signal_direction from public.insider_transactions where accession_number = '9999999990-26-000003') = 0,  '10b5-1 sale should be 0';
+  assert (select signal_direction from public.insider_transactions where accession_number = '9999999990-26-000004') = 0,  'sell-to-cover should be 0';
+  assert (select signal_direction from public.insider_transactions where accession_number = '9999999990-26-000005') = -1, 'discretionary sale should be -1';
+  assert (select signal_direction from public.insider_transactions where accession_number = '9999999990-26-000009') = 0,  'v1 rows never count';
+  assert (select stake_change_pct from public.insider_transactions where accession_number = '9999999990-26-000001') = 50, 'buy stake change';
+  assert (select stake_change_pct from public.insider_transactions where accession_number = '9999999990-26-000005') = 5,  'sell stake change';
+
+  -- Breakdown: Alice +31.5, Bob +8.1, Eve -3.8.
+  total := 0;
+  for b in select * from public.company_signal_breakdown(v_company) loop
+    total := total + b.points;
+    if b.insider_name = 'Alice' then
+      assert b.points = 31.5 and b.role_weight = 1.5 and b.size_factor = 2.5 and b.conviction = 1.4 and b.trade_count = 1,
+        format('Alice wrong: %s', row_to_json(b));
+    elsif b.insider_name = 'Bob' then
+      assert b.points = 8.1 and b.size_factor = 1.35 and b.weighted_value = 70000, format('Bob wrong: %s', row_to_json(b));
+    elsif b.insider_name = 'Eve' then
+      assert b.points = -3.8 and b.direction = -1 and b.conviction = 1.0, format('Eve wrong: %s', row_to_json(b));
+    else
+      raise exception 'unexpected insider in breakdown: %', row_to_json(b);
+    end if;
+  end loop;
+  assert total = 35.8, format('breakdown total %s', total);
+
+  -- Score = 50 + 35.8 + cluster (+4 for the second buyer) = 89.8, stored by the trigger.
+  select * into s from public.company_signal(v_company);
+  assert s.score = 89.8 and s.label = 'Strong buying' and s.buyers = 2 and s.sellers = 1
+         and s.cluster_points = 4 and s.buy_value = 1100000 and s.sell_value = 200000,
+    format('company_signal wrong: %s', row_to_json(s));
+  select * into s from public.sentiment_scores where company_id = v_company;
+  assert s.signal_score = 89.8 and s.signal_label = 'Strong buying' and s.signal_buyers = 2
+         and s.signal_last_trade_date = current_date - 5,
+    format('sentiment_scores not updated: %s', row_to_json(s));
+
+  -- Only routine trades: no signal.
+  insert into public.companies (ticker, cik, company_name) values ('ZZQUIET', '9999999991', 'Quiet Co.')
+  returning id into v_quiet;
+  insert into public.insider_transactions
+    (company_id, accession_number, filing_date, transaction_date, reporting_owner_name, owner_title,
+     transaction_code, shares, price_per_share, is_10b5_1, parser_version)
+  values (v_quiet, '9999999991-26-000001', now(), current_date, 'Zed', 'CEO', 'S', 100000, 100, true, 2);
+  select * into s from public.sentiment_scores where company_id = v_quiet;
+  assert s.signal_score = 50 and s.signal_label = 'No signal', format('quiet company: %s', row_to_json(s));
+  assert s.sell_count = 1, 'the spec WISI still counts the plan sale';
+
+  -- Three officers each dumping $1M: 3 x -5.3 - 4 (cluster) = 30.1, Selling.
+  insert into public.companies (ticker, cik, company_name) values ('ZZSELL', '9999999992', 'Sell Co.')
+  returning id into v_sellers;
+  insert into public.insider_transactions
+    (company_id, accession_number, filing_date, transaction_date, reporting_owner_name, insider_cik, owner_title,
+     transaction_code, shares, price_per_share, parser_version)
+  select v_sellers, format('9999999992-26-00000%s', i), now(), current_date, 'Seller ' || i, format('000000020%s', i),
+         'EVP', 'S', 10000 + i, 100, 2
+    from generate_series(1, 3) as i;
+  select * into s from public.company_signal(v_sellers);
+  assert s.score = 30.1 and s.label = 'Selling' and s.sellers = 3 and s.cluster_points = -4,
+    format('selling company: %s', row_to_json(s));
+
+  -- A fund and its general partner reporting the same $2M purchase count once.
+  insert into public.insider_transactions
+    (company_id, accession_number, filing_date, transaction_date, reporting_owner_name, insider_cik, owner_title,
+     transaction_code, shares, price_per_share, parser_version)
+  values
+    (v_quiet, '9999999991-26-000002', now(), current_date, 'Fund LP',      '0000000301', '10% Owner',           'P', 20000, 100, 2),
+    (v_quiet, '9999999991-26-000003', now(), current_date, 'Fund GP LLC',  '0000000302', '10% Owner',           'P', 20000, 100, 2),
+    (v_quiet, '9999999991-26-000004', now(), current_date, 'Jane Partner', '0000000303', 'Director, 10% Owner', 'P', 20000, 100, 2);
+  select * into s from public.company_signal(v_quiet);
+  assert s.buyers = 1 and s.buy_value = 2000000 and s.cluster_points = 0,
+    format('group filing counted more than once: %s', row_to_json(s));
+  assert (select insider_name from public.company_signal_breakdown(v_quiet)) = 'Jane Partner',
+    'the highest-weighted group member should represent the trade';
+
+  -- Labels and size factor edges.
+  assert public.signal_label(50, 0) = 'No signal' and public.signal_label(75, 1) = 'Strong buying'
+     and public.signal_label(58, 1) = 'Buying' and public.signal_label(57.9, 1) = 'Neutral'
+     and public.signal_label(42, 1) = 'Selling' and public.signal_label(25, 1) = 'Strong selling', 'labels';
+  assert public.signal_size_factor(10000) = 0.5 and public.signal_size_factor(1000000) = 2.5
+     and public.signal_size_factor(1e12) = 4 and public.signal_size_factor(100) = 0, 'size factor';
+  raise notice 'OK  insider signal';
+end;
+$$;
+
+-- 9. Market-wide ingestion helpers ---------------------------------------------
+do $$
+declare
+  n      integer;
+  v_ids  text[];
+begin
+  insert into public.companies (ticker, cik, company_name) values ('ZZOLD', '9999999980', 'Existing Co.');
+
+  select array_agg(e.ticker order by e.ticker) into v_ids
+    from public.ensure_companies(jsonb_build_array(
+      jsonb_build_object('cik', '9999999980', 'ticker', 'ZZRENAMED', 'company_name', 'Existing Co.'),  -- known CIK
+      jsonb_build_object('cik', '9999999981', 'ticker', 'ZZNEW',     'company_name', 'New Co.'),
+      jsonb_build_object('cik', '9999999981', 'ticker', 'ZZNEW',     'company_name', 'New Co. again'),
+      jsonb_build_object('cik', '9999999982', 'ticker', 'ZZOLD',     'company_name', 'Ticker clash'),  -- ticker taken
+      jsonb_build_object('cik', '9999999983', 'ticker', 'bad ticker','company_name', 'Invalid')
+    )) as e;
+  assert v_ids = array['ZZNEW', 'ZZOLD'], format('ensure_companies returned %s', v_ids);
+  assert (select count(*) from public.sentiment_scores s join public.companies c on c.id = s.company_id
+           where c.cik = '9999999981') = 1, 'new company has no score row';
+
+  insert into public.processed_filings (accession_number, status, parser_version)
+  values ('9999999981-26-000001', 'stored', 2), ('9999999981-26-000002', 'no_ticker', 1);
+  select array_agg(u.accession_number order by u.accession_number) into v_ids
+    from public.filter_unprocessed_filings(
+      array['9999999981-26-000001', '9999999981-26-000002', '9999999981-26-000003', '9999999981-26-000003'], 2::smallint) u;
+  assert v_ids = array['9999999981-26-000002', '9999999981-26-000003'], format('unprocessed: %s', v_ids);
+
+  assert public.claim_ingestion_lease('test', 'run-a', 60), 'first claim';
+  assert not public.claim_ingestion_lease('test', 'run-b', 60), 'second holder must wait';
+  assert public.claim_ingestion_lease('test', 'run-a', 60), 'holder can extend';
+  perform public.release_ingestion_lease('test', 'run-a');
+  assert public.claim_ingestion_lease('test', 'run-b', 60), 'claim after release';
+  update public.ingestion_lease set expires_at = now() - interval '1 second' where name = 'test';
+  assert public.claim_ingestion_lease('test', 'run-c', 60), 'claim after expiry';
+
+  -- Hank's v1 row (ZZSIG) needs re-parsing until a v2 run has processed it.
+  select count(*) into n from public.reparse_candidates(1000, 2::smallint) r where r.accession_number = '9999999990-26-000009';
+  assert n = 1, 'v1 row should be a reparse candidate';
+  insert into public.processed_filings (accession_number, status, parser_version) values ('9999999990-26-000009', 'missing', 2);
+  select count(*) into n from public.reparse_candidates(1000, 2::smallint) r where r.accession_number = '9999999990-26-000009';
+  assert n = 0, 'processed v1 row should not be retried';
+
+  select count(*) into n from public.market_cap_refresh_candidates(100) c where c.ticker = 'ZZSIG';
+  assert n = 1, 'ZZSIG should need a market cap';
+  raise notice 'OK  ingestion helpers';
 end;
 $$;
 

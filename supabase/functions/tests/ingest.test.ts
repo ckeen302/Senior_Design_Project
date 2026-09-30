@@ -216,12 +216,16 @@ Deno.test("ingests new filings, skips non-issuer filings, detects whales and ref
     filing_date: "2026-09-09T23:00:10.000Z",
     transaction_date: "2026-09-08",
     reporting_owner_name: "Taneja Vaibhav",
+    insider_cik: "0001771340",
     owner_title: "Chief Financial Officer",
     transaction_code: "S",
     shares: 2605.75,
     price_per_share: 360.134,
     is_direct: true,
     post_transaction_shares: 25972.25,
+    is_10b5_1: false,
+    is_sell_to_cover: true,
+    parser_version: 2,
   });
   assertEquals(repo.skipped, [{ company_id: tsla.id, accession_number: "0001193125-26-403089", reason: "not_issuer" }]);
 

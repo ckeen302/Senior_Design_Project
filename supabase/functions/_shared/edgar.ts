@@ -152,7 +152,9 @@ export class EdgarClient {
     return run;
   }
 
-  private async send(url: string, accept: string): Promise<Response> {
+  private async send(url: string, accept: string): Promise<Response>;
+  private async send(url: string, accept: string, allowMissing: true): Promise<Response | null>;
+  private async send(url: string, accept: string, allowMissing = false): Promise<Response | null> {
     for (let attempt = 0; ; attempt++) {
       const wait = this.lastFinishedAt + this.delayMs - Date.now();
       if (this.lastFinishedAt > 0 && wait > 0) await delay(wait);
@@ -172,6 +174,23 @@ export class EdgarClient {
       this.log(`[sec] GET ${url.replace(/^https:\/\/[^/]+/, "")} -> ${res.status} (${ms} ms)`);
 
       if (res.ok) return res;
+      if (allowMissing && res.status === 404) {
+        await res.body?.cancel();
+        return null;
+      }
+      if (allowMissing && res.status === 403) {
+        // EDGAR's archive answers missing files (weekends, holidays) with an S3
+        // "AccessDenied" 403; its rate limiter uses a different 403 page.
+        const body = await res.text();
+        if (/AccessDenied|NoSuchKey/i.test(body)) return null;
+        if (attempt < this.maxRetries) {
+          const backoff = this.retryBaseMs * 2 ** attempt;
+          this.log(`[sec] HTTP 403; backing off ${backoff} ms before retry ${attempt + 1}`);
+          await delay(backoff);
+          continue;
+        }
+        throw new EdgarHttpError(res.status, url);
+      }
       if (RETRYABLE.has(res.status) && attempt < this.maxRetries) {
         await res.body?.cancel();
         const backoff = this.retryBaseMs * 2 ** attempt;
@@ -186,6 +205,35 @@ export class EdgarClient {
 
   getText(url: string): Promise<string> {
     return this.enqueue(async () => (await this.send(url, "application/xml,text/xml,*/*")).text());
+  }
+
+  /** Like getText, but resolves to null when the file does not exist. */
+  getTextOrNull(url: string): Promise<string | null> {
+    return this.enqueue(async () => {
+      const res = await this.send(url, "text/plain,application/xml,*/*", true);
+      return res ? res.text() : null;
+    });
+  }
+
+  /** Latest Form 4 filings (newest first), 100 feed entries ≈ 50 filings per page. */
+  getLatestForm4Feed(start = 0): Promise<string> {
+    return this.getText(
+      `${SEC_WWW_BASE}/cgi-bin/browse-edgar?action=getcurrent&type=4&company=&dateb=&owner=include&start=${start}&count=100&output=atom`,
+    );
+  }
+
+  /** EDGAR daily form index for a date (YYYY-MM-DD); null on weekends / holidays / not yet published. */
+  getDailyFormIndex(day: string): Promise<string | null> {
+    const [y, m] = day.split("-").map(Number);
+    const quarter = Math.floor((m - 1) / 3) + 1;
+    return this.getTextOrNull(
+      `${SEC_WWW_BASE}/Archives/edgar/daily-index/${y}/QTR${quarter}/form.${day.replace(/-/g, "")}.idx`,
+    );
+  }
+
+  /** Full submission text (SEC header + every document) for one filing. */
+  getFullSubmission(filing: FilingPointer): Promise<string | null> {
+    return this.getTextOrNull(fullSubmissionUrl(filing.cik, filing.accession));
   }
 
   getJson<T>(url: string): Promise<T> {
@@ -230,4 +278,110 @@ export function prettifyCompanyName(name: string): string {
     .toLowerCase()
     .replace(/\b([a-z])([a-z]*)/g, (_m, first: string, rest: string) => first.toUpperCase() + rest)
     .replace(/\b(Llc|Lp|Plc|Nv|Sa|Ag|Se|Usa|Us|Ii|Iii|Iv)\b/g, (m) => m.toUpperCase());
+}
+
+/** A filing located by accession number and any CIK whose EDGAR folder holds it. */
+export interface FilingPointer {
+  accession: string;
+  cik: string;
+}
+
+export function fullSubmissionUrl(cik: string, accessionNumber: string): string {
+  const cikInt = String(Number(padCik(cik)));
+  return `${SEC_WWW_BASE}/Archives/edgar/data/${cikInt}/${accessionNumber.replace(/-/g, "")}/${accessionNumber}.txt`;
+}
+
+/**
+ * Parses the "latest filings" Atom feed. Each filing appears once for the
+ * issuer and once per reporting owner; entries are de-duplicated, keeping the
+ * issuer's folder. The feed's type filter is a prefix match ("4" also returns
+ * 4/A, 424B2, 485BPOS, ...), so only entries whose form type is exactly "4"
+ * are kept.
+ */
+export function parseLatestFeed(atom: string): FilingPointer[] {
+  const byAccession = new Map<string, FilingPointer & { issuer: boolean }>();
+  for (const entry of atom.match(/<entry>[\s\S]*?<\/entry>/g) ?? []) {
+    const form = /<category[^>]*\bterm="([^"]*)"/.exec(entry)?.[1] ?? /<title>\s*(\S+)\s+-\s/.exec(entry)?.[1];
+    if (form !== "4") continue;
+    const accession = /accession-number=(\d{10}-\d{2}-\d{6})/.exec(entry)?.[1];
+    const cik = /\/Archives\/edgar\/data\/(\d+)\//.exec(entry)?.[1];
+    if (!accession || !cik) continue;
+    const issuer = /\(Issuer\)/.test(entry);
+    const existing = byAccession.get(accession);
+    if (!existing || (issuer && !existing.issuer)) byAccession.set(accession, { accession, cik: padCik(cik), issuer });
+  }
+  return [...byAccession.values()].map(({ accession, cik }) => ({ accession, cik }));
+}
+
+/** Form 4 filings listed in an EDGAR daily form index (form.YYYYMMDD.idx). */
+export function parseDailyFormIndex(index: string): FilingPointer[] {
+  const byAccession = new Map<string, FilingPointer>();
+  for (const line of index.split(/\r?\n/)) {
+    if (!line.startsWith("4 ")) continue;
+    const m = /edgar\/data\/(\d+)\/(\d{10}-\d{2}-\d{6})\.txt/.exec(line);
+    if (m && !byAccession.has(m[2])) byAccession.set(m[2], { accession: m[2], cik: padCik(m[1]) });
+  }
+  return [...byAccession.values()];
+}
+
+/** The Form 4 XML inside a full submission text file, or null. */
+export function extractOwnershipXml(submission: string): string | null {
+  for (const m of submission.matchAll(/<XML>([\s\S]*?)<\/XML>/gi)) {
+    if (/<ownershipDocument[\s>]/.test(m[1])) return m[1].trim();
+  }
+  return null;
+}
+
+/** Document type from the submission header ("4", "4/A", ...). */
+export function submissionFormType(submission: string): string | null {
+  return /CONFORMED SUBMISSION TYPE:\s*(\S+)/.exec(submission)?.[1] ?? null;
+}
+
+/** YYYY-MM-DD for an instant, in US Eastern time (EDGAR's clock). */
+export function easternDate(date: Date): string {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/New_York",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(date);
+}
+
+/** Converts an Eastern wall-clock time to a UTC ISO timestamp. */
+export function easternToIso(y: number, mo: number, d: number, h: number, mi: number, s: number): string {
+  const guess = Date.UTC(y, mo - 1, d, h, mi, s);
+  const parts = Object.fromEntries(
+    new Intl.DateTimeFormat("en-US", {
+      timeZone: "America/New_York",
+      hourCycle: "h23",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+    }).formatToParts(new Date(guess)).map((p) => [p.type, p.value]),
+  );
+  const asEastern = Date.UTC(+parts.year, +parts.month - 1, +parts.day, +parts.hour, +parts.minute, +parts.second);
+  return new Date(guess + (guess - asEastern)).toISOString();
+}
+
+/** SEC acceptance time from the submission header (Eastern time) as a UTC ISO string. */
+export function submissionAcceptedAt(submission: string): string | null {
+  const m = /<ACCEPTANCE-DATETIME>(\d{4})(\d{2})(\d{2})(\d{2})(\d{2})(\d{2})/.exec(submission);
+  if (!m) return null;
+  const [, y, mo, d, h, mi, s] = m.map(Number);
+  return easternToIso(y, mo, d, h, mi, s);
+}
+
+/** Calendar day arithmetic on YYYY-MM-DD strings. */
+export function addDays(day: string, delta: number): string {
+  const [y, m, d] = day.split("-").map(Number);
+  return new Date(Date.UTC(y, m - 1, d + delta)).toISOString().slice(0, 10);
+}
+
+export function isWeekend(day: string): boolean {
+  const [y, m, d] = day.split("-").map(Number);
+  const dow = new Date(Date.UTC(y, m - 1, d)).getUTCDay();
+  return dow === 0 || dow === 6;
 }

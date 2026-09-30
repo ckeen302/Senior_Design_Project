@@ -1,7 +1,15 @@
 /** Supabase (PostgREST) implementation of the ingestion repository. */
 
 import type { SupabaseClient } from "@supabase/supabase-js";
-import type { CompanyRecord, IngestRepository, SkippedFiling, TransactionInsert } from "./ingest.ts";
+import type { FilingPointer } from "./edgar.ts";
+import {
+  type CompanyRecord,
+  type IngestRepository,
+  PARSER_VERSION,
+  type SkippedFiling,
+  type TransactionInsert,
+} from "./ingest.ts";
+import type { EdgarDay, IssuerInput, IssuerRecord, MarketRepository, ProcessedFiling } from "./market.ts";
 
 const COMPANY_COLUMNS = "id, ticker, cik, company_name, market_cap, market_cap_updated_at, last_synced_at";
 const CHUNK = 100;
@@ -22,7 +30,9 @@ export interface PushRecipient {
   token: string;
 }
 
-export class SupabaseIngestRepository implements IngestRepository {
+const LEASE_NAME = "sec";
+
+export class SupabaseIngestRepository implements IngestRepository, MarketRepository {
   constructor(private readonly db: SupabaseClient) {}
 
   async findCompanies(by: { tickers?: string[]; ciks?: string[] }): Promise<CompanyRecord[]> {
@@ -71,7 +81,12 @@ export class SupabaseIngestRepository implements IngestRepository {
     const existing = new Set<string>();
     for (const part of chunks(accessionNumbers)) {
       const stored = check(
-        await this.db.from("insider_transactions").select("accession_number").in("accession_number", part),
+        // Rows from an older parser version are fetched and parsed again.
+        await this.db
+          .from("insider_transactions")
+          .select("accession_number")
+          .in("accession_number", part)
+          .gte("parser_version", PARSER_VERSION),
         "Loading stored accession numbers",
       ) as { accession_number: string }[];
       const skipped = check(
@@ -146,5 +161,97 @@ export class SupabaseIngestRepository implements IngestRepository {
         "Clearing invalid push tokens",
       );
     }
+  }
+
+  // --- Market-wide pipeline -------------------------------------------------
+
+  async unprocessedAccessions(accessions: string[], minVersion: number): Promise<Set<string>> {
+    const out = new Set<string>();
+    for (const part of chunks(accessions, 500)) {
+      const rows = check(
+        await this.db.rpc("filter_unprocessed_filings", { p_accessions: part, p_min_version: minVersion }),
+        "Filtering processed filings",
+      ) as { accession_number: string }[];
+      rows.forEach((r) => out.add(r.accession_number));
+    }
+    return out;
+  }
+
+  async ensureCompanies(issuers: IssuerInput[]): Promise<IssuerRecord[]> {
+    if (issuers.length === 0) return [];
+    return check(
+      await this.db.rpc("ensure_companies", { p_companies: issuers }),
+      "Creating companies",
+    ) as IssuerRecord[];
+  }
+
+  async recordProcessed(rows: ProcessedFiling[]): Promise<void> {
+    const processedAt = new Date().toISOString();
+    for (const part of chunks(rows)) {
+      check(
+        await this.db
+          .from("processed_filings")
+          .upsert(part.map((r) => ({ ...r, processed_at: processedAt })), { onConflict: "accession_number" }),
+        "Recording processed filings",
+      );
+    }
+  }
+
+  async getDays(days: string[]): Promise<Map<string, EdgarDay>> {
+    const out = new Map<string, EdgarDay>();
+    for (const part of chunks(days)) {
+      const rows = check(
+        await this.db.from("edgar_days").select("day, status, form4_count").in("day", part),
+        "Loading backfill progress",
+      ) as EdgarDay[];
+      rows.forEach((r) => out.set(r.day, r));
+    }
+    return out;
+  }
+
+  async saveDay(day: EdgarDay): Promise<void> {
+    check(
+      await this.db.from("edgar_days").upsert({ ...day, updated_at: new Date().toISOString() }, { onConflict: "day" }),
+      "Saving backfill progress",
+    );
+  }
+
+  async reparseCandidates(limit: number, minVersion: number): Promise<FilingPointer[]> {
+    const rows = check(
+      await this.db.rpc("reparse_candidates", { p_limit: limit, p_min_version: minVersion }),
+      "Loading rows to re-parse",
+    ) as { accession_number: string; cik: string }[];
+    return rows.map((r) => ({ accession: r.accession_number, cik: r.cik }));
+  }
+
+  async marketCapCandidates(limit: number): Promise<{ id: string; ticker: string }[]> {
+    return check(
+      await this.db.rpc("market_cap_refresh_candidates", { p_limit: limit }),
+      "Loading market cap candidates",
+    ) as { id: string; ticker: string }[];
+  }
+
+  async recordMarketCap(companyId: string, marketCapUsd: number | null, at: Date): Promise<void> {
+    const checkedAt = at.toISOString();
+    const patch = marketCapUsd
+      ? { market_cap: marketCapUsd, market_cap_updated_at: checkedAt, market_cap_checked_at: checkedAt }
+      : { market_cap_checked_at: checkedAt };
+    check(await this.db.from("companies").update(patch).eq("id", companyId), "Recording market cap");
+  }
+
+  /** True when this run may talk to the SEC; false while another run holds the lease. */
+  async claimLease(holder: string, seconds: number): Promise<boolean> {
+    const claimed = check(
+      await this.db.rpc("claim_ingestion_lease", { p_name: LEASE_NAME, p_holder: holder, p_seconds: seconds }),
+      "Claiming the ingestion lease",
+    );
+    return claimed === true;
+  }
+
+  async releaseLease(holder: string): Promise<void> {
+    check(
+      await this.db.rpc("release_ingestion_lease", { p_name: LEASE_NAME, p_holder: holder }),
+      "Releasing the ingestion lease",
+    );
   }
 }

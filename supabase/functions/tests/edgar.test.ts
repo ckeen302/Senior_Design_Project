@@ -1,13 +1,23 @@
 import { assert, assertEquals, assertRejects, assertThrows } from "jsr:@std/assert@1";
 import {
+  addDays,
+  easternDate,
+  easternToIso,
   EdgarClient,
   EdgarHttpError,
+  extractOwnershipXml,
   form4XmlUrl,
+  fullSubmissionUrl,
+  isWeekend,
   normalizeTicker,
   padCik,
+  parseDailyFormIndex,
+  parseLatestFeed,
   prettifyCompanyName,
   recentForm4Filings,
   SEC_REQUEST_DELAY_MS,
+  submissionAcceptedAt,
+  submissionFormType,
   type SubmissionsResponse,
 } from "../_shared/edgar.ts";
 
@@ -131,4 +141,99 @@ Deno.test("company names from EDGAR are tidied for display", () => {
   assertEquals(prettifyCompanyName("ELI LILLY & Co"), "Eli Lilly & Co");
   assertEquals(prettifyCompanyName("Tesla, Inc."), "Tesla, Inc.");
   assertEquals(prettifyCompanyName("NVIDIA Corporation"), "NVIDIA Corporation");
+});
+
+const atomEntry = (accession: string, cik: string, role: "Issuer" | "Reporting", name = "X", form = "4") => `<entry>
+<title>${form} - ${name} (${cik.padStart(10, "0")}) (${role})</title>
+<link rel="alternate" type="text/html" href="https://www.sec.gov/Archives/edgar/data/${cik}/${accession.replace(/-/g, "")}/${accession}-index.htm"/>
+<updated>2026-09-29T21:48:44-04:00</updated>
+<id>urn:tag:sec.gov,2008:accession-number=${accession}</id>
+</entry>`;
+
+Deno.test("latest-filings feed: one pointer per filing, preferring the issuer's folder", () => {
+  const atom = `<?xml version="1.0"?><feed>${
+    [
+      atomEntry("0001493152-26-044974", "1865131", "Reporting", "Seshadri Vishwas"),
+      atomEntry("0001493152-26-044974", "318306", "Issuer", "ABEONA THERAPEUTICS INC."),
+      atomEntry("0001213900-26-104739", "1841538", "Reporting"),
+      atomEntry("0001213900-26-104739", "1841536", "Reporting"),
+      // The feed's type filter is a prefix match: amendments and prospectuses are ignored.
+      atomEntry("0001213900-26-104740", "1841536", "Reporting", "X", "4/A"),
+      atomEntry("0001193125-26-500001", "19617", "Issuer", "JPMORGAN CHASE & CO", "424B2"),
+      atomEntry("0001193125-26-500002", "19617", "Issuer", "JPMORGAN CHASE & CO", "425").replace(
+        "</title>",
+        '</title>\n<category scheme="https://www.sec.gov/" label="form type" term="425"/>',
+      ),
+    ].join("\n")
+  }</feed>`;
+  assertEquals(parseLatestFeed(atom), [
+    { accession: "0001493152-26-044974", cik: "0000318306" },
+    { accession: "0001213900-26-104739", cik: "0001841538" },
+  ]);
+  assertEquals(parseLatestFeed("<feed></feed>"), []);
+});
+
+Deno.test("daily form index: Form 4 lines only, de-duplicated by accession", () => {
+  const index = [
+    "Form Type   Company Name                                                  CIK         Date Filed  File Name",
+    "-".repeat(80),
+    "3                Some Owner                                                    1111111     20260929    edgar/data/1111111/0001111111-26-000001.txt",
+    "4                111, Inc.                                                     1738906     20260929    edgar/data/1738906/0001104659-26-111575.txt",
+    "4                3D Investment Partners Pte. Ltd.                              1841538     20260929    edgar/data/1841538/0001213900-26-104739.txt",
+    "4                3D Opportunity Master Fund                                    1841536     20260929    edgar/data/1841536/0001213900-26-104739.txt",
+    "4/A              Amended Co                                                    2222222     20260929    edgar/data/2222222/0002222222-26-000009.txt",
+    "424B2            Bank                                                          3333333     20260929    edgar/data/3333333/0003333333-26-000001.txt",
+  ].join("\r\n");
+  assertEquals(parseDailyFormIndex(index), [
+    { accession: "0001104659-26-111575", cik: "0001738906" },
+    { accession: "0001213900-26-104739", cik: "0001841538" },
+  ]);
+});
+
+Deno.test("full submission: form type, Eastern acceptance time and the ownership XML", () => {
+  const submission = Deno.readTextFileSync(
+    new URL("./fixtures/submission_0001193125-26-403089.txt", import.meta.url),
+  );
+  assertEquals(submissionFormType(submission), "4");
+  // <ACCEPTANCE-DATETIME>20260925200208 is 8:02:08 pm EDT.
+  assertEquals(submissionAcceptedAt(submission), "2026-09-26T00:02:08.000Z");
+  const xml = extractOwnershipXml(submission)!;
+  assert(xml.startsWith("<?xml"), "XML declaration kept");
+  assert(xml.includes("<issuerTradingSymbol>LEN</issuerTradingSymbol>"));
+  assertEquals(extractOwnershipXml("<SEC-DOCUMENT>no xml here</SEC-DOCUMENT>"), null);
+  assertEquals(
+    fullSubmissionUrl("0000920760", "0001193125-26-403089"),
+    "https://www.sec.gov/Archives/edgar/data/920760/000119312526403089/0001193125-26-403089.txt",
+  );
+});
+
+Deno.test("Eastern time helpers handle daylight saving and calendar edges", () => {
+  assertEquals(easternToIso(2026, 1, 15, 12, 0, 0), "2026-01-15T17:00:00.000Z"); // EST, UTC-5
+  assertEquals(easternToIso(2026, 7, 1, 12, 0, 0), "2026-07-01T16:00:00.000Z"); // EDT, UTC-4
+  assertEquals(easternToIso(2026, 12, 31, 23, 59, 59), "2027-01-01T04:59:59.000Z");
+  assertEquals(easternDate(new Date("2026-09-30T03:00:00Z")), "2026-09-29"); // 11 pm the day before
+  assertEquals(easternDate(new Date("2026-09-30T05:00:00Z")), "2026-09-30");
+  assertEquals(addDays("2026-03-01", -1), "2026-02-28");
+  assertEquals(addDays("2026-12-31", 1), "2027-01-01");
+  assertEquals([isWeekend("2026-09-26"), isWeekend("2026-09-27"), isWeekend("2026-09-28")], [true, true, false]);
+});
+
+Deno.test("missing archive files resolve to null; rate limiting is still retried", async () => {
+  const bodies: [number, string][] = [
+    [404, "Not Found"],
+    [403, "<?xml version=\"1.0\"?><Error><Code>AccessDenied</Code></Error>"],
+    [403, "Request Rate Threshold Exceeded"],
+    [200, "form index"],
+  ];
+  const { fetchFn, calls } = fakeFetch((_url, n) => new Response(bodies[n - 1][1], { status: bodies[n - 1][0] }));
+  const client = new EdgarClient({ userAgent: UA, fetchFn, retryBaseMs: 5, delayMs: 0, log: () => {} });
+  assertEquals(await client.getTextOrNull("https://www.sec.gov/Archives/missing.txt"), null);
+  assertEquals(await client.getDailyFormIndex("2026-09-26"), null);
+  assertEquals(await client.getDailyFormIndex("2026-10-01"), "form index"); // 403 throttle, then 200
+  assertEquals(calls.map((c) => c.url.replace("https://www.sec.gov", "")), [
+    "/Archives/missing.txt",
+    "/Archives/edgar/daily-index/2026/QTR3/form.20260926.idx",
+    "/Archives/edgar/daily-index/2026/QTR4/form.20261001.idx",
+    "/Archives/edgar/daily-index/2026/QTR4/form.20261001.idx",
+  ]);
 });

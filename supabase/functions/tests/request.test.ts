@@ -13,6 +13,7 @@ Deno.test("service callers: tickers and CIKs are normalised with defaults applie
     lookbackDays: 365,
     maxCompanies: 0,
     notify: true,
+    market: null,
   });
 });
 
@@ -53,4 +54,17 @@ Deno.test("invalid payloads are rejected with 400", () => {
   ) {
     assertEquals(status(() => parseIngestRequest(body, "service")), 400, JSON.stringify(body));
   }
+});
+
+Deno.test("market-wide modes are scheduler-only and validate their options", () => {
+  const auto = parseIngestRequest({ mode: "auto" }, "service");
+  assertEquals([auto.mode, auto.notify, auto.market], ["auto", true, { maxPages: 4, days: 90, day: null }]);
+  const backfill = parseIngestRequest({ mode: "backfill", day: "2026-09-15", days: 30, notify: false }, "service");
+  assertEquals([backfill.notify, backfill.market], [false, { maxPages: 4, days: 30, day: "2026-09-15" }]);
+  assertEquals(parseIngestRequest({ mode: "latest", maxPages: 10 }, "service").market?.maxPages, 10);
+  assertEquals(status(() => parseIngestRequest({ mode: "auto" }, "user")), 403);
+  assertEquals(status(() => parseIngestRequest({ mode: "reparse" }, "user")), 403);
+  assertEquals(status(() => parseIngestRequest({ mode: "latest", maxPages: 11 }, "service")), 400);
+  assertEquals(status(() => parseIngestRequest({ mode: "backfill", day: "15/09/2026" }, "service")), 400);
+  assertEquals(status(() => parseIngestRequest({ mode: "everything" }, "service")), 400);
 });

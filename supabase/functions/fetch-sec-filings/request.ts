@@ -5,9 +5,29 @@ import { HttpError } from "../_shared/http.ts";
 
 export type CallerRole = "service" | "user";
 
+/** Market-wide modes: every Form 4 on EDGAR (scheduler only). */
+export type MarketMode = "auto" | "latest" | "backfill" | "reparse";
+const MARKET_MODES: readonly string[] = ["auto", "latest", "backfill", "reparse"];
+
+export function isMarketMode(mode: string): mode is MarketMode {
+  return MARKET_MODES.includes(mode);
+}
+
+export interface MarketRequestOptions {
+  /** Latest-filings feed pages to scan (≈50 filings each). */
+  maxPages: number;
+  /** Backfill window in calendar days. */
+  days: number;
+  /** Backfill a single day (YYYY-MM-DD). */
+  day: string | null;
+}
+
 export interface IngestRequest {
-  /** "symbols": the tickers/CIKs in the payload; "tracked": every company in the database. */
-  mode: "symbols" | "tracked";
+  /**
+   * "symbols": the tickers/CIKs in the payload; "tracked": every company in the
+   * database; "auto" / "latest" / "backfill" / "reparse": the whole market.
+   */
+  mode: "symbols" | "tracked" | MarketMode;
   tickers: string[];
   ciks: string[];
   /** Maximum new Form 4 filings fetched per company. */
@@ -17,6 +37,8 @@ export interface IngestRequest {
   maxCompanies: number;
   /** Send whale push alerts for qualifying new filings. */
   notify: boolean;
+  /** Options for the market-wide modes (null otherwise). */
+  market: MarketRequestOptions | null;
 }
 
 const LIMITS: Record<CallerRole, {
@@ -47,12 +69,37 @@ export function parseIngestRequest(body: unknown, role: CallerRole): IngestReque
   const b = body as Record<string, unknown>;
   const limits = LIMITS[role];
 
-  if (b.mode !== undefined && b.mode !== "symbols" && b.mode !== "tracked") {
-    throw new HttpError(400, '"mode" must be "symbols" or "tracked"');
+  const modes = ["symbols", "tracked", ...MARKET_MODES];
+  if (b.mode !== undefined && (typeof b.mode !== "string" || !modes.includes(b.mode))) {
+    throw new HttpError(400, `"mode" must be one of: ${modes.join(", ")}`);
   }
-  const mode = b.mode === "tracked" ? "tracked" : "symbols";
-  if (mode === "tracked" && role !== "service") {
-    throw new HttpError(403, "Tracked mode is reserved for the scheduler");
+  const mode = (b.mode ?? "symbols") as IngestRequest["mode"];
+  if (mode !== "symbols" && role !== "service") {
+    throw new HttpError(403, `${mode} mode is reserved for the scheduler`);
+  }
+
+  if (isMarketMode(mode)) {
+    let day: string | null = null;
+    if (b.day !== undefined && b.day !== null) {
+      if (typeof b.day !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(b.day) || Number.isNaN(Date.parse(b.day))) {
+        throw new HttpError(400, '"day" must be a date like "2026-09-15"');
+      }
+      day = b.day;
+    }
+    return {
+      mode,
+      tickers: [],
+      ciks: [],
+      limit: 0,
+      lookbackDays: 0,
+      maxCompanies: 0,
+      notify: b.notify !== false,
+      market: {
+        maxPages: intOption(b.maxPages, "maxPages", [4, 10]),
+        days: intOption(b.days, "days", [90, 365]),
+        day,
+      },
+    };
   }
 
   const tickers = new Set<string>();
@@ -107,5 +154,6 @@ export function parseIngestRequest(body: unknown, role: CallerRole): IngestReque
     lookbackDays: intOption(b.lookbackDays, "lookbackDays", limits.lookbackDays),
     maxCompanies: mode === "tracked" ? intOption(b.maxCompanies, "maxCompanies", limits.maxCompanies) : 0,
     notify: role === "service" && b.notify !== false,
+    market: null,
   };
 }
