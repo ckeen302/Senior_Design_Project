@@ -1,6 +1,7 @@
 import { assert, assertEquals, assertMatch } from "jsr:@std/assert@1";
 import { EdgarClient, form4XmlUrl } from "../_shared/edgar.ts";
 import {
+  buildTransactionRow,
   type CompanyRecord,
   type IngestRepository,
   runIngestion,
@@ -307,4 +308,27 @@ Deno.test("SEC throttling aborts the company without storing partial garbage", a
   assertMatch(report.companies[0].error!, /HTTP 403/);
   assertEquals(repo.transactions.size, 0);
   assertEquals(report.totals.failed, 1);
+});
+
+Deno.test("transaction dates after the filing date are treated as typos", () => {
+  const summary = {
+    reportingOwnerName: "Doe Jane",
+    insiderCik: null,
+    ownerTitle: "CEO",
+    transactionCode: "A",
+    shares: 100,
+    pricePerShare: 0,
+    totalValue: 0,
+    transactionDate: "2036-08-03",
+    isDirect: true,
+    postTransactionShares: 100,
+    isPlanned: false,
+    isSellToCover: false,
+    isOptionSale: false,
+    lineCount: 1,
+  };
+  // Filed 9:00 pm Eastern on Aug 3, 2026 (01:00 UTC the next day).
+  assertEquals(buildTransactionRow("c", "a", "2026-08-04T01:00:00.000Z", summary).transaction_date, "2026-08-03");
+  const onTime = { ...summary, transactionDate: "2026-08-01" };
+  assertEquals(buildTransactionRow("c", "a", "2026-08-04T01:00:00.000Z", onTime).transaction_date, "2026-08-01");
 });

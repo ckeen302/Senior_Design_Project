@@ -41,6 +41,7 @@ describe("generated column mirrors", () => {
     expect(signalDirection(t("S", { is_10b5_1: true }))).toBe(0);
     expect(signalDirection(t("S", { is_sell_to_cover: true }))).toBe(0);
     expect(signalDirection(t("S", { is_option_sale: true }))).toBe(0);
+    expect(signalDirection(t("P", { price_suspect: true }))).toBe(0);
     expect(signalDirection(t("P", { is_10b5_1: true }))).toBe(0);
     expect(signalDirection(t("A"))).toBe(0);
     expect(signalDirection({ transaction_code: "P", parser_version: 1 })).toBe(0);
@@ -70,6 +71,7 @@ describe("plain-English trades", () => {
     [{ transaction_code: "S", is_10b5_1: true }, "Sold $938K", "10b5-1 plan", true],
     [{ transaction_code: "S", is_sell_to_cover: true }, "Sold $938K to cover taxes", "Tax sale", true],
     [{ transaction_code: "S", is_option_sale: true }, "Exercised options, sold $938K", "Option sale", true],
+    [{ transaction_code: "P", price_suspect: true }, "Bought 2,606 shares", "Price looks wrong in filing", true],
     [{ transaction_code: "F" }, "$938K of stock withheld for taxes", "Tax withholding", true],
     [{ transaction_code: "A", total_value: 0 }, "Received 2,606 shares", "Stock award", true],
     [{ transaction_code: "M", total_value: 0 }, "Exercised options for 2,606 shares", "Option exercise", true],
@@ -117,6 +119,8 @@ describe("summaries", () => {
     expect(formatPoints(0)).toBe("0");
     expect(changeSince(100, 112)).toBeCloseTo(12);
     expect(changeSince(null, 112)).toBeNull();
+    // Ordinary shares at $14.47 vs. an ADS at $119: not the same security.
+    expect(changeSince(14.47, 119.44)).toBeNull();
   });
 
   it("folds group filings of one trade into a single row", () => {

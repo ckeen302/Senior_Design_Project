@@ -47,12 +47,13 @@ type TradeFlags = {
   is_10b5_1?: boolean | null;
   is_sell_to_cover?: boolean | null;
   is_option_sale?: boolean | null;
+  price_suspect?: boolean | null;
   parser_version?: number | null;
 };
 
 /** Mirrors the generated column insider_transactions.signal_direction. */
 export function signalDirection(t: TradeFlags): -1 | 0 | 1 {
-  if ((t.parser_version ?? 1) < 2) return 0;
+  if ((t.parser_version ?? 1) < 2 || t.price_suspect) return 0;
   if (t.transaction_code === "P" && !t.is_10b5_1) return 1;
   if (t.transaction_code === "S" && !t.is_10b5_1 && !t.is_sell_to_cover && !t.is_option_sale) return -1;
   return 0;
@@ -107,6 +108,7 @@ export type TradeKind =
   | "award"
   | "exercise"
   | "gift"
+  | "suspect"
   | "other";
 
 export interface TradeStory {
@@ -150,7 +152,16 @@ export function describeTrade(t: StoryInput): TradeStory {
   const shares = `${formatShares(t.shares)} shares`;
   let story: Omit<TradeStory, "stakeNote">;
 
-  if (code === "P") {
+  if ((code === "P" || code === "S") && t.price_suspect) {
+    // The filing's price is implausible, so its dollar amount is not repeated.
+    story = {
+      kind: "suspect",
+      tone: "neutral",
+      headline: `${code === "P" ? "Bought" : "Sold"} ${shares}`,
+      tag: "Price looks wrong in filing",
+      routine: true,
+    };
+  } else if (code === "P") {
     story = t.is_10b5_1
       ? { kind: "planned-buy", tone: "neutral", headline: `Bought ${amount(t)}`, tag: "10b5-1 plan", routine: true }
       : { kind: "buy", tone: "buy", headline: `Bought ${amount(t)}`, tag: "Open-market buy", routine: false };
@@ -228,10 +239,16 @@ export function signalSummary(s: {
   return parts.length > 0 ? parts.join(" · ") : "No open-market insider buys or sells in 90 days";
 }
 
-/** % move from the insiders' average price to the current price. */
+/**
+ * % move from the insiders' average price to the current price. Returns null
+ * when the two prices are too far apart to be the same security (a filing in
+ * ordinary shares vs. a US-listed ADS, or a different share class).
+ */
 export function changeSince(avgPrice: number | null | undefined, price: number | null | undefined): number | null {
   if (!avgPrice || !price || avgPrice <= 0 || price <= 0) return null;
-  return ((price - avgPrice) / avgPrice) * 100;
+  const ratio = price / avgPrice;
+  if (ratio < 0.2 || ratio > 5) return null;
+  return (ratio - 1) * 100;
 }
 
 /** "+22.5" / "−3.8" with a real minus sign. */

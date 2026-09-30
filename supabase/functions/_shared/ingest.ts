@@ -7,6 +7,8 @@
  */
 
 import {
+  addDays,
+  easternDate,
   EdgarClient,
   EdgarHttpError,
   type FilingRef,
@@ -64,11 +66,14 @@ export function buildTransactionRow(
   acceptedAt: string,
   summary: Form4Summary,
 ): TransactionInsert {
+  // A trade can't happen after it was reported: dates like 2036 are typos.
+  const filedDay = easternDate(new Date(acceptedAt));
+  const transactionDate = summary.transactionDate > addDays(filedDay, 2) ? filedDay : summary.transactionDate;
   return {
     company_id: companyId,
     accession_number: accessionNumber,
     filing_date: acceptedAt,
-    transaction_date: summary.transactionDate,
+    transaction_date: transactionDate,
     reporting_owner_name: summary.reportingOwnerName,
     insider_cik: summary.insiderCik,
     owner_title: summary.ownerTitle,

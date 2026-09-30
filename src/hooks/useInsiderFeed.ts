@@ -62,6 +62,7 @@ export function normalizeRealtimeTransaction(raw: Record<string, unknown>): Insi
     is_10b5_1: raw.is_10b5_1 === true,
     is_sell_to_cover: raw.is_sell_to_cover === true,
     is_option_sale: raw.is_option_sale === true,
+    price_suspect: raw.price_suspect === true,
     parser_version: Number(raw.parser_version) || 1,
   };
   return {
@@ -144,9 +145,15 @@ export function useRealtimeFeed(): { status: RealtimeStatus; freshIds: ReadonlyS
       })
       .on("postgres_changes", { event: "UPDATE", schema: "public", table: "insider_transactions" }, (payload) => {
         const row = normalizeRealtimeTransaction(payload.new as Record<string, unknown>);
-        updateFeedCaches(queryClient, (data) => ({
+        // A re-parsed or re-checked trade can stop matching a filter (e.g. a sale
+        // re-classified as an option sale leaves "Sells"): drop it from that feed.
+        updateFeedCaches(queryClient, (data, filter) => ({
           ...data,
-          pages: data.pages.map((page) => page.map((i) => (i.id === row.id ? { ...i, ...row } : i))),
+          pages: data.pages.map((page) =>
+            page
+              .map((i) => (i.id === row.id ? { ...i, ...row } : i))
+              .filter((i) => i.id !== row.id || matchesFeedFilter(i, filter))
+          ),
         }));
       })
       .on("postgres_changes", { event: "DELETE", schema: "public", table: "insider_transactions" }, (payload) => {

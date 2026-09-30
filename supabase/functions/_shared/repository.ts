@@ -201,7 +201,7 @@ export class SupabaseIngestRepository implements IngestRepository, MarketReposit
     const out = new Map<string, EdgarDay>();
     for (const part of chunks(days)) {
       const rows = check(
-        await this.db.from("edgar_days").select("day, status, form4_count").in("day", part),
+        await this.db.from("edgar_days").select("day, status, form4_count, updated_at").in("day", part),
         "Loading backfill progress",
       ) as EdgarDay[];
       rows.forEach((r) => out.set(r.day, r));
@@ -210,10 +210,30 @@ export class SupabaseIngestRepository implements IngestRepository, MarketReposit
   }
 
   async saveDay(day: EdgarDay): Promise<void> {
+    const { day: date, status, form4_count } = day;
     check(
-      await this.db.from("edgar_days").upsert({ ...day, updated_at: new Date().toISOString() }, { onConflict: "day" }),
+      await this.db
+        .from("edgar_days")
+        .upsert({ day: date, status, form4_count, updated_at: new Date().toISOString() }, { onConflict: "day" }),
       "Saving backfill progress",
     );
+  }
+
+  /** The accession numbers that still count as discretionary buys after the database's checks. */
+  async countedBuys(accessions: string[]): Promise<Set<string>> {
+    const out = new Set<string>();
+    for (const part of chunks(accessions)) {
+      const rows = check(
+        await this.db
+          .from("insider_transactions")
+          .select("accession_number")
+          .in("accession_number", part)
+          .eq("signal_direction", 1),
+        "Confirming whale trades",
+      ) as { accession_number: string }[];
+      rows.forEach((r) => out.add(r.accession_number));
+    }
+    return out;
   }
 
   async reparseCandidates(limit: number, minVersion: number): Promise<FilingPointer[]> {

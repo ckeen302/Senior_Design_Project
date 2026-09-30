@@ -58,10 +58,19 @@ checkbox and the footnotes:
 | Sale to cover taxes on vesting ("sell to cover") | *Sold $938K to cover taxes* | No |
 | Options exercised and sold in the same filing | *Exercised options, sold $32.2M* | No |
 | Awards, exercises, tax withholding, gifts (`A`, `M`, `F`, `G`, …) | *Received 12,000 shares* | No |
+| A price that can't be right (see below) | *Bought 40,000,000 shares · Price looks wrong in filing* | No |
 
 Group members (a fund, its general partner, a director who controls it) often each file a
 Form 4 for the same trade; identical trades (same company, date, shares and price) count once
 and are folded into one feed card.
+
+**Price sanity checks.** Some filers type the total dollar amount into the price field
+(40,000,000 shares "at $40,000,000" = $1.6 quadrillion). An open-market trade is flagged
+(`price_suspect`) and never counts when it is worth more than $20B, more than half the
+company's market cap (more than $500M while the market cap is unknown), or its price is 20×
+off the company's other trades within 45 days. Flags are re-evaluated whenever the company is
+re-scored (new filing, new market cap, nightly job); dates after the filing date are treated as
+typos and replaced by the filing date.
 
 ### The Insider Signal (0–100)
 
@@ -158,8 +167,10 @@ select vault.create_secret('<same value as INGEST_SECRET>',            'insiderp
 ```
 
 From then on pg_cron calls the function every 2 minutes in `auto` mode: new filings first,
-then the 90-day backfill (≈ 350 filings per run; the full backfill of ~20,000 filings takes
-2–3 hours and resumes where it left off). To run it by hand:
+then the 90-day backfill (≈ 350 filings per run; the full backfill of ~30,000 filings takes
+2–3 hours and resumes where it left off). Once caught up, a run costs one SEC request and
+about a second. Two daily jobs re-score every company (05:17 UTC, rolls the 90-day window)
+and trim pg_cron's run history to a week (04:41 UTC). To run the ingestion by hand:
 
 ```bash
 curl -X POST https://pnxzcywtjucanmwmmvsr.supabase.co/functions/v1/fetch-sec-filings \
@@ -201,9 +212,9 @@ npx expo start              # scan the QR code with Expo Go, or press i / a / w
 ## Testing
 
 ```bash
-npm run verify           # TypeScript + Jest (90 tests) + client secret scan
-npm run test:functions   # Deno tests for the Edge Function (57 tests, real SEC fixtures)
-npm run test:db          # migrations + WISI / Insider Signal / trigger / RLS checks on a local PostgreSQL
+npm run verify           # TypeScript + Jest (92 tests) + client secret scan
+npm run test:functions   # Deno tests for the Edge Function (58 tests, real SEC fixtures)
+npm run test:db          # migrations + WISI / Insider Signal / price checks / trigger / RLS on a local PostgreSQL
 ```
 
 CI (`.github/workflows/ci.yml`) runs all three on every pull request.
@@ -239,8 +250,15 @@ CI (`.github/workflows/ci.yml`) runs all three on every pull request.
   SEC header (form type, acceptance time in Eastern time, converted to UTC) and the Form 4 XML. The
   issuer comes from the XML and is created on the fly (ticker from the SEC ticker list, else the
   filing's trading symbol). Filings are recorded in `processed_filings` so nothing is downloaded
-  twice; `edgar_days` tracks the backfill. The feed's `type=4` filter is a prefix match (it also
-  returns 4/A, 424B2, …), so only exact Form 4 entries are used; amendments are skipped.
+  twice; `edgar_days` tracks the backfill (days whose index is not published yet are retried every
+  30 minutes, not every run). The latest-filings feed is requested with `owner=only` (otherwise its
+  `type=4` prefix filter also returns 424B2 / 497K prospectuses) and paging stops at the first page
+  with nothing new; amendments (4/A) are skipped.
+* **Market caps** (spec WISI denominator and a price check) come from Finnhub, 20 companies per run,
+  largest trades first; companies Finnhub doesn't know are retried weekly.
+* **Scoring locks.** Re-scoring takes a row lock on the company (not an advisory lock), so the
+  nightly job can re-score any number of companies in one transaction. The scoring trigger fires only
+  when a column that feeds the scores changes.
 * **Parser versions.** Rows carry `parser_version`. When classification improves, the `reparse`
   step re-downloads only rows the new parser could classify differently (v3: discretionary sales,
   to detect option exercise-and-sell).
@@ -265,6 +283,8 @@ CI (`.github/workflows/ci.yml`) runs all three on every pull request.
   slip through (the card and "Why this score" always show what was counted).
 * Exercise-and-sell is detected within one filing (sale ≤ 110% of the exercised shares).
 * Group filings are matched on identical date, shares and price.
+* Price checks are heuristics: a real trade can be held back (e.g. a huge block at a company whose
+  market cap Finnhub doesn't know) and a mistyped one at a company with no other trades can slip through.
 * Form 4/A amendments are not applied; history starts 90 days back (plus a year for tickers
   imported with "Track").
 * The Finnhub key ships inside the app because the WebSocket requires it in the URL (as in the

@@ -91,7 +91,7 @@ const NO_TICKER = { accession: "0000000004-26-000004", cik: "0000000066" };
 function fakeSec(overrides: Record<string, () => Response> = {}) {
   const routes = new Map<string, () => Response>();
   const latest = (start: number) =>
-    `https://www.sec.gov/cgi-bin/browse-edgar?action=getcurrent&type=4&company=&dateb=&owner=include&start=${start}&count=100&output=atom`;
+    `https://www.sec.gov/cgi-bin/browse-edgar?action=getcurrent&type=4&company=&dateb=&owner=only&start=${start}&count=100&output=atom`;
   routes.set(
     latest(0),
     () =>
@@ -196,9 +196,10 @@ class MemoryMarketRepo implements MarketRepository {
     return Promise.resolve(new Map(days.filter((d) => this.days.has(d)).map((d) => [d, this.days.get(d)!])));
   }
   saveDay(day: EdgarDay) {
-    this.days.set(day.day, day);
+    this.days.set(day.day, { ...day, updated_at: this.clock().toISOString() });
     return Promise.resolve();
   }
+  clock = () => NOW;
   reparseCandidates(limit: number, minVersion: number) {
     return Promise.resolve(
       this.v1Rows.filter((p) => !((this.processed.get(p.accession)?.parser_version ?? 0) >= minVersion)).slice(0, limit),
@@ -255,10 +256,10 @@ Deno.test("latest feed: new filings are stored under their issuer, created on th
   assertEquals(calls.filter((u) => u.endsWith(".txt")).length, 2);
   assertEquals(report.secRequests, 5);
 
-  // A second run only re-reads the feed.
+  // A second run reads one feed page, sees nothing new and stops.
   const { fetchFn: fetch2, calls: calls2 } = fakeSec();
   const second = await run(repo, fetch2);
-  assertEquals([second.latest.pending, second.outcomes.stored], [0, 0]);
+  assertEquals([second.latest.pages, second.latest.pending, second.outcomes.stored], [1, 0, 0]);
   assert(!calls2.some((u) => u.endsWith(".txt")), "processed filings must not be downloaded again");
 });
 
@@ -272,7 +273,7 @@ Deno.test("backfill: daily index filings are classified and the day is marked do
   assertEquals(
     report.backfill.days.map((d) => [d.day, d.status]),
     [
-      ["2026-09-29", "unpublished"],
+      ["2026-09-29", "pending"],
       ["2026-09-28", "done"],
       ["2026-09-25", "empty"],
       ["2026-09-24", "empty"],
@@ -280,7 +281,12 @@ Deno.test("backfill: daily index filings are classified and the day is marked do
     ],
   );
   assertEquals(report.backfill.complete, false);
-  assertEquals(repo.days.get("2026-09-28"), { day: "2026-09-28", status: "done", form4_count: 4 });
+  assertEquals(repo.days.get("2026-09-28"), {
+    day: "2026-09-28",
+    status: "done",
+    form4_count: 4,
+    updated_at: NOW.toISOString(),
+  });
   assert(!calls.some((u) => u.includes("20260926") || u.includes("20260927")), "weekends are skipped");
 
   assertEquals(repo.processed.get(LEN.accession)?.status, "stored");
@@ -289,10 +295,15 @@ Deno.test("backfill: daily index filings are classified and the day is marked do
   assertEquals(repo.processed.get(NO_TICKER.accession)?.status, "no_ticker");
   assertEquals(report.whales, [], "backfilled filings never alert");
 
-  // Finished days are not requested again.
+  // Finished days are not requested again; the unpublished day waits 30 minutes.
   const { fetchFn: fetch2, calls: calls2 } = fakeSec();
   await run(repo, fetch2, { steps: ["backfill"], backfillDays: 7 });
   assert(!calls2.some((u) => u.includes("20260928") || u.includes("20260925")), "done / empty days are skipped");
+  assert(!calls2.some((u) => u.includes("20260929")), "a pending day is not re-checked right away");
+  const later = new Date(NOW.getTime() + 31 * 60 * 1000);
+  const { fetchFn: fetch3, calls: calls3 } = fakeSec();
+  await run(repo, fetch3, { steps: ["backfill"], backfillDays: 7, now: () => later });
+  assertEquals(calls3.filter((u) => u.includes("daily-index")).map((u) => u.split("/").pop()), ["form.20260929.idx"]);
 });
 
 Deno.test("a filing whose ticker belongs to another company is skipped as no_ticker", async () => {

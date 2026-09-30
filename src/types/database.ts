@@ -69,6 +69,8 @@ export type Database = {
           is_sell_to_cover: boolean;
           /** Sale of shares just acquired by exercising options (exercise-and-sell). */
           is_option_sale: boolean;
+          /** The filed price looks wrong (e.g. the total typed into the price field); never counts. */
+          price_suspect: boolean;
           parser_version: number;
           /** +1 discretionary open-market buy, -1 discretionary open-market sale, 0 routine / other (generated). */
           signal_direction: number;
@@ -94,6 +96,7 @@ export type Database = {
           is_10b5_1?: boolean;
           is_sell_to_cover?: boolean;
           is_option_sale?: boolean;
+          price_suspect?: boolean;
           parser_version?: number;
           signal_direction?: never;
           stake_change_pct?: never;
@@ -117,6 +120,7 @@ export type Database = {
           is_10b5_1?: boolean;
           is_sell_to_cover?: boolean;
           is_option_sale?: boolean;
+          price_suspect?: boolean;
           parser_version?: number;
           signal_direction?: never;
           stake_change_pct?: never;

@@ -40,7 +40,10 @@ function TradeCardComponent({ trade, company, now, highlighted, relatedFilers = 
   const who = role ? `${owner} · ${role}` : owner;
   const headlineColor = story.tone === "buy" ? colors.buy : story.tone === "sell" ? colors.sell : colors.text;
   const details = [
-    trade.shares > 0 ? `${formatShares(trade.shares)} sh${trade.price_per_share > 0 ? ` @ ${formatPrice(trade.price_per_share)}` : ""}` : null,
+    trade.shares > 0 && story.kind !== "suspect"
+      ? `${formatShares(trade.shares)} sh${trade.price_per_share > 0 ? ` @ ${formatPrice(trade.price_per_share)}` : ""}`
+      : null,
+    story.kind === "suspect" ? `Filed at ${formatPrice(trade.price_per_share)} a share` : null,
     story.stakeNote,
   ].filter(Boolean).join(" · ");
 

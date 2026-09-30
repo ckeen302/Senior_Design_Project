@@ -120,7 +120,9 @@ begin
     (v_company, '9999999998-26-000003', now(), current_date, 'C', 'Director', 'A', 999,  0,  false, 2),
     (v_company, '9999999998-26-000004', now(), (date_trunc('month', current_date) - interval '2 months')::date,
      'D', 'CFO', 'P', 100, 30, false, 2),
-    (v_company, '9999999998-26-000005', now(), current_date, 'E', 'CFO',      'S', 100,  50, true,  2);
+    (v_company, '9999999998-26-000005', now(), current_date, 'E', 'CFO',      'S', 100,  50, true,  2),
+    -- the total typed into the price field: flagged, and kept out of every series
+    (v_company, '9999999998-26-000006', now(), current_date, 'F', '10% Owner', 'S', 1000000, 50000, false, 2);
 
   for r in select * from public.get_insider_activity(v_company, 12) loop
     n := n + 1;
@@ -456,6 +458,70 @@ begin
   select count(*) into n from public.market_cap_refresh_candidates(100) c where c.ticker = 'ZZSIG';
   assert n = 1, 'ZZSIG should need a market cap';
   raise notice 'OK  ingestion helpers';
+end;
+$$;
+
+-- 10. Data-quality guards ----------------------------------------------------------
+do $$
+declare
+  v_co uuid;
+  sig  record;
+begin
+  insert into public.companies (ticker, cik, company_name, market_cap, market_cap_updated_at)
+  values ('ZZBAD', '9999999970', 'Bad Price Co.', 400000000, now())
+  returning id into v_co;
+
+  insert into public.insider_transactions
+    (company_id, accession_number, filing_date, transaction_date, reporting_owner_name, insider_cik,
+     owner_title, transaction_code, shares, price_per_share, parser_version)
+  values
+    (v_co, '9999999970-26-000001', now(), current_date - 3, 'Good CEO',      '0000000401', 'CEO',       'P', 10000,    20,       3),
+    (v_co, '9999999970-26-000002', now(), current_date - 4, 'Good Director', '0000000402', 'Director',  'P', 5000,     21,       3),
+    (v_co, '9999999970-26-000003', now(), current_date - 5, 'Good CFO',      '0000000403', 'CFO',       'S', 2000,     19.5,     3),
+    -- total typed into the price field: 40M shares "at $40M" = $1.6 quadrillion
+    (v_co, '9999999970-26-000004', now(), current_date - 2, 'Fund LLC',      '0000000404', '10% Owner', 'P', 40000000, 40000000, 3),
+    -- $20M, well under half the company, but priced 1,000x above everyone else
+    (v_co, '9999999970-26-000005', now(), current_date - 2, 'Typo Director', '0000000405', 'Director',  'P', 1000,     20000,    3),
+    -- a normal price, but $210M is more than half of a $400M company
+    (v_co, '9999999970-26-000006', now(), current_date - 2, 'Big Owner',     '0000000406', '10% Owner', 'P', 10000000, 21,       3);
+
+  assert (select price_suspect from public.insider_transactions where accession_number = '9999999970-26-000004'), 'absurd total not flagged';
+  assert (select price_suspect from public.insider_transactions where accession_number = '9999999970-26-000005'), '1000x price not flagged';
+  assert (select price_suspect from public.insider_transactions where accession_number = '9999999970-26-000006'), 'trade worth > half the company not flagged';
+  assert not (select price_suspect from public.insider_transactions where accession_number = '9999999970-26-000001'), 'normal trade flagged';
+  assert (select signal_direction from public.insider_transactions where accession_number = '9999999970-26-000004') = 0, 'flagged trade still counts';
+
+  select * into sig from public.sentiment_scores where company_id = v_co;
+  assert sig.signal_buyers = 2 and sig.signal_sellers = 1 and sig.buy_count = 2 and sig.sell_count = 1
+         and sig.signal_buy_value = 305000,
+    format('suspect trades reached the scores: %s', row_to_json(sig));
+
+  -- Correcting the typo re-scores the company and the trade counts again.
+  update public.insider_transactions set price_per_share = 20 where accession_number = '9999999970-26-000005';
+  assert not (select price_suspect from public.insider_transactions where accession_number = '9999999970-26-000005'), 'fixed price still flagged';
+  select * into sig from public.sentiment_scores where company_id = v_co;
+  assert sig.signal_buyers = 3, format('corrected trade not counted: %s', row_to_json(sig));
+
+  -- Flag-only updates must not re-fire the scoring trigger (it sets them itself).
+  assert (select pg_get_triggerdef(t.oid) from pg_trigger t
+           where t.tgname = 'on_insider_transaction_change') like '%UPDATE OF company_id%',
+    'scoring trigger fires on every column';
+
+  -- No market cap yet: a $600M trade waits for one; a $5B cap clears it.
+  insert into public.companies (ticker, cik, company_name) values ('ZZNOCAP', '9999999971', 'No Cap Co.')
+  returning id into v_co;
+  insert into public.insider_transactions
+    (company_id, accession_number, filing_date, transaction_date, reporting_owner_name, insider_cik,
+     owner_title, transaction_code, shares, price_per_share, parser_version)
+  values (v_co, '9999999971-26-000001', now(), current_date - 1, 'Holder Inc', '0000000407', '10% Owner', 'P', 20000000, 30, 3);
+  assert (select price_suspect from public.insider_transactions where accession_number = '9999999971-26-000001'),
+    '$600M trade at a company without a market cap not held back';
+  update public.companies set market_cap = 5000000000, market_cap_updated_at = now() where id = v_co;
+  assert not (select price_suspect from public.insider_transactions where accession_number = '9999999971-26-000001'),
+    'market cap did not clear a plausible trade';
+
+  insert into public.edgar_days (day, status) values ('2001-01-02', 'pending');
+  raise notice 'OK  data-quality guards';
 end;
 $$;
 

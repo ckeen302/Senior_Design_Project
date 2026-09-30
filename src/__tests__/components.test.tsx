@@ -21,6 +21,7 @@ const trade = {
   is_10b5_1: false,
   is_sell_to_cover: false,
   is_option_sale: false,
+  price_suspect: false,
   parser_version: 3,
   signal_direction: 1,
   stake_change_pct: 25,
@@ -51,6 +52,19 @@ describe("TradeCard", () => {
     );
     expect(screen.getByText("Sold $1.3M")).toBeTruthy();
     expect(screen.getByText("10b5-1 plan · routine")).toBeTruthy();
+  });
+
+  it("never repeats an implausible dollar amount", async () => {
+    await render(
+      <TradeCard
+        trade={{ ...trade, shares: 40_000_000, price_per_share: 40_000_000, total_value: 1.6e15, price_suspect: true, signal_direction: 0 }}
+        company={acme}
+        now={NOW}
+      />,
+    );
+    expect(screen.getByText("Bought 40,000,000 shares")).toBeTruthy();
+    expect(screen.getByText("Price looks wrong in filing · routine")).toBeTruthy();
+    expect(screen.queryByText(/\$1\.6/)).toBeNull();
   });
 });
 

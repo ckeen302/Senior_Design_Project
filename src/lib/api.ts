@@ -22,7 +22,7 @@ export const FEED_PAGE_SIZE = 25;
 export const WHALE_MIN_VALUE = 1_000_000;
 
 const TRANSACTION_COLUMNS =
-  "id, company_id, accession_number, filing_date, transaction_date, reporting_owner_name, owner_title, transaction_code, shares, price_per_share, total_value, is_direct, post_transaction_shares, insider_cik, is_10b5_1, is_sell_to_cover, is_option_sale, parser_version, signal_direction, stake_change_pct";
+  "id, company_id, accession_number, filing_date, transaction_date, reporting_owner_name, owner_title, transaction_code, shares, price_per_share, total_value, is_direct, post_transaction_shares, insider_cik, is_10b5_1, is_sell_to_cover, is_option_sale, price_suspect, parser_version, signal_direction, stake_change_pct";
 
 export type Company = Tables<"companies">;
 export type SentimentScore = Tables<"sentiment_scores">;

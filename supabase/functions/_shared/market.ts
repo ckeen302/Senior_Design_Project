@@ -61,9 +61,14 @@ export interface IssuerRecord extends IssuerInput {
 
 export interface EdgarDay {
   day: string;
-  status: "partial" | "done" | "empty";
+  /** pending: the daily index was not published yet when last checked. */
+  status: "pending" | "partial" | "done" | "empty";
   form4_count: number;
+  updated_at?: string;
 }
+
+/** A recent day whose index was not published yet is checked again after this long. */
+const PENDING_RETRY_MS = 30 * 60 * 1000;
 
 export interface MarketRepository {
   /** The accession numbers not yet processed by parser >= minVersion. */
@@ -106,7 +111,7 @@ export interface MarketOptions {
 
 export interface DayReport {
   day: string;
-  status: EdgarDay["status"] | "unpublished" | "skipped";
+  status: EdgarDay["status"];
   form4: number;
   pending: number;
   processed: number;
@@ -365,12 +370,16 @@ export async function runMarketIngestion(
         report.latest.seen += pointers.length;
         if (pointers.length === 0) break;
         const pending = await repo.unprocessedAccessions(pointers.map((p) => p.accession), MIN_REUSABLE_PARSER_VERSION);
+        let fresh = 0;
         for (const p of pointers) {
           if (pending.has(p.accession) && !queued.has(p.accession)) {
             queued.add(p.accession);
             queue.push(p);
+            fresh++;
           }
         }
+        // Caught up: older pages only hold filings that are already stored.
+        if (fresh === 0) break;
       }
       report.latest.pending = queue.length;
       report.latest.processed = (await processAll(queue, true, false)).handled;
@@ -399,6 +408,13 @@ export async function runMarketIngestion(
       for (const day of days) {
         const state = known.get(day);
         if (!options.backfillDay && (state?.status === "done" || state?.status === "empty")) continue;
+        if (
+          !options.backfillDay && state?.status === "pending" && state.updated_at &&
+          now().getTime() - Date.parse(state.updated_at) < PENDING_RETRY_MS
+        ) {
+          complete = false; // checked recently; the index is published once a day
+          continue;
+        }
         if (pastDeadline()) {
           complete = false;
           break;
@@ -407,10 +423,10 @@ export async function runMarketIngestion(
         const index = await edgar.getDailyFormIndex(day);
         if (index === null) {
           // Holidays have no index; recent days may simply not be published yet.
-          const final = day <= addDays(today, -4);
-          if (final) await repo.saveDay({ day, status: "empty", form4_count: 0 });
-          else complete = false;
-          report.backfill.days.push({ day, status: final ? "empty" : "unpublished", form4: 0, pending: 0, processed: 0 });
+          const status = day <= addDays(today, -4) ? "empty" : "pending";
+          await repo.saveDay({ day, status, form4_count: 0 });
+          if (status === "pending") complete = false;
+          report.backfill.days.push({ day, status, form4: 0, pending: 0, processed: 0 });
           continue;
         }
 

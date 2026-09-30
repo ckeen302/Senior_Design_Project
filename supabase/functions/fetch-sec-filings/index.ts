@@ -149,7 +149,12 @@ function formatUsdShort(value: number): string {
 }
 
 async function sendWhaleAlerts(whales: WhaleTrade[], repo: SupabaseIngestRepository, config: Config) {
-  const trades = [...whales].sort((a, b) => b.totalValue - a.totalValue).slice(0, MAX_WHALE_ALERTS_PER_RUN);
+  // The database has the final say (e.g. a price that looks mistyped in the filing).
+  const counted = await repo.countedBuys(whales.map((w) => w.accessionNumber));
+  const trades = whales
+    .filter((w) => counted.has(w.accessionNumber))
+    .sort((a, b) => b.totalValue - a.totalValue)
+    .slice(0, MAX_WHALE_ALERTS_PER_RUN);
   const recipients = await repo.whaleAlertRecipients();
   if (trades.length === 0 || recipients.length === 0) {
     return { trades: trades.length, recipients: recipients.length, sent: 0, failed: 0, invalidTokensRemoved: 0 };
@@ -220,6 +225,8 @@ Deno.serve(async (req) => {
           backfillDays: request.market.days,
           backfillDay: request.market.day ?? undefined,
           finnhubApiKey: config.finnhubApiKey,
+          // Finnhub's free tier allows 60 calls a minute, shared with the app's quotes.
+          marketCapLimit: 20,
           whaleMinValueUsd: config.whaleMinValueUsd,
         });
         const notifications = request.notify && report.whales.length > 0

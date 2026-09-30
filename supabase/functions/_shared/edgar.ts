@@ -215,10 +215,15 @@ export class EdgarClient {
     });
   }
 
-  /** Latest Form 4 filings (newest first), 100 feed entries ≈ 50 filings per page. */
+  /**
+   * Latest Form 4 filings (newest first), 100 feed entries ≈ 50 filings per page.
+   * owner=only restricts the feed to ownership filings; without it the "4"
+   * prefix filter also returns 424B2 / 497K prospectuses, which crowd out
+   * Form 4s during market hours.
+   */
   getLatestForm4Feed(start = 0): Promise<string> {
     return this.getText(
-      `${SEC_WWW_BASE}/cgi-bin/browse-edgar?action=getcurrent&type=4&company=&dateb=&owner=include&start=${start}&count=100&output=atom`,
+      `${SEC_WWW_BASE}/cgi-bin/browse-edgar?action=getcurrent&type=4&company=&dateb=&owner=only&start=${start}&count=100&output=atom`,
     );
   }
 
