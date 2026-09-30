@@ -37,7 +37,7 @@ export function MainTabs() {
       })}
     >
       <Tab.Screen name="Feed" component={FeedScreen} options={{ title: "Insider Feed", tabBarLabel: "Feed" }} />
-      <Tab.Screen name="Signals" component={SignalsScreen} options={{ title: "Sentiment Signals", tabBarLabel: "Signals" }} />
+      <Tab.Screen name="Signals" component={SignalsScreen} options={{ title: "Insider Signals", tabBarLabel: "Signals" }} />
       <Tab.Screen name="Watchlist" component={WatchlistScreen} options={{ title: "Watchlist" }} />
       <Tab.Screen name="Settings" component={SettingsScreen} options={{ title: "Settings" }} />
     </Tab.Navigator>

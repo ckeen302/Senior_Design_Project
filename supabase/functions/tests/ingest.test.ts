@@ -225,7 +225,8 @@ Deno.test("ingests new filings, skips non-issuer filings, detects whales and ref
     post_transaction_shares: 25972.25,
     is_10b5_1: false,
     is_sell_to_cover: true,
-    parser_version: 2,
+    is_option_sale: true,
+    parser_version: 3,
   });
   assertEquals(repo.skipped, [{ company_id: tsla.id, accession_number: "0001193125-26-403089", reason: "not_issuer" }]);
 

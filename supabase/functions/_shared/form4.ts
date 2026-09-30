@@ -13,6 +13,8 @@
  *      (S) carry the insider signal; pre-scheduled Rule 10b5-1 plan trades and
  *      sell-to-cover tax sales are routine. Discretionary P/S lines win, then
  *      routine P/S lines, then any other code with the largest dollar value.
+ *      A sale of (at most ~10% more than) the shares the filing also reports
+ *      exercising from options is an exercise-and-sell: routine as well.
  *   3. Shares are summed, the price is the share-weighted average, the date is
  *      the latest transaction date, and holdings are taken from the last line.
  */
@@ -71,9 +73,14 @@ export interface Form4Summary {
   postTransactionShares: number | null;
   isPlanned: boolean;
   isSellToCover: boolean;
+  /** Sale of shares just acquired by exercising options (exercise-and-sell). */
+  isOptionSale: boolean;
   /** Number of filing lines condensed into this summary. */
   lineCount: number;
 }
+
+/** Codes for exercising / converting derivative securities into common stock. */
+const EXERCISE_CODES = new Set(["M", "X", "C"]);
 
 const ARRAY_TAGS = new Set([
   "reportingOwner",
@@ -352,6 +359,17 @@ export function summarizeForm4(doc: Form4Document, fallbackDate?: string | null)
     .reduce((s, t) => s + t.shares, 0);
   const lastLine = primary.lines[primary.lines.length - 1];
 
+  // Exercise-and-sell: the filing exercises options and sells about as many shares.
+  const exercised = Math.max(
+    doc.transactions
+      .filter((t) => t.table === "nonDerivative" && EXERCISE_CODES.has(t.code) && t.acquiredDisposed !== "D")
+      .reduce((sum, t) => sum + t.shares, 0),
+    doc.transactions
+      .filter((t) => t.table === "derivative" && EXERCISE_CODES.has(t.code))
+      .reduce((sum, t) => sum + t.shares, 0),
+  );
+  const isOptionSale = primary.code === "S" && exercised > 0 && primary.shares <= exercised * 1.1;
+
   return {
     reportingOwnerName: describeOwnerNames(doc.owners),
     insiderCik: padCik(doc.owners[0]?.cik ?? null),
@@ -365,6 +383,7 @@ export function summarizeForm4(doc: Form4Document, fallbackDate?: string | null)
     postTransactionShares: lastLine.sharesOwnedAfter,
     isPlanned: primary.planned,
     isSellToCover: primary.sellToCover,
+    isOptionSale,
     lineCount: primary.lines.length,
   };
 }

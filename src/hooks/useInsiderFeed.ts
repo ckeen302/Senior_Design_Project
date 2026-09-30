@@ -15,9 +15,13 @@ import {
   matchesFeedFilter,
   queryKeys,
 } from "../lib/api";
+import { collapseGroupFilings, signalDirection, stakeChangePct } from "../lib/signal";
 import { supabase } from "../lib/supabase";
 
-export const FEED_FILTERS: FeedFilter[] = ["all", "buys", "sells", "whales"];
+export const FEED_FILTERS: FeedFilter[] = ["key", "buys", "sells", "whales", "all"];
+
+/** Realtime rows older than this are backfilled history, not news: never prepend them. */
+const LIVE_WINDOW_MS = 3 * 24 * 60 * 60 * 1000;
 
 type FeedData = InfiniteData<FeedItem[], number>;
 export type RealtimeStatus = "connecting" | "live" | "offline";
@@ -30,7 +34,8 @@ export function useInsiderFeed(filter: FeedFilter) {
     getNextPageParam: (lastPage, allPages) => (lastPage.length < FEED_PAGE_SIZE ? undefined : allPages.length),
   });
 
-  // Realtime inserts shift offsets, so later pages can repeat rows: de-duplicate.
+  // Realtime inserts shift offsets, so later pages can repeat rows: de-duplicate,
+  // then fold group filings of the same trade into one card.
   const items = useMemo(() => {
     const seen = new Set<string>();
     const out: FeedItem[] = [];
@@ -39,17 +44,26 @@ export function useInsiderFeed(filter: FeedFilter) {
       seen.add(item.id);
       out.push(item);
     }
-    return out;
+    return collapseGroupFilings(out);
   }, [query.data]);
 
   return { ...query, items };
 }
 
-/** Realtime rows arrive without joins or generated columns (total_value): rebuild them. */
+/** Realtime rows arrive without joins or generated columns: rebuild them. */
 export function normalizeRealtimeTransaction(raw: Record<string, unknown>): InsiderTransaction {
   const shares = Number(raw.shares) || 0;
   const price = Number(raw.price_per_share) || 0;
   const post = raw.post_transaction_shares;
+  const code = String(raw.transaction_code ?? "");
+  const postShares = post === null || post === undefined ? null : Number(post);
+  const flags = {
+    transaction_code: code,
+    is_10b5_1: raw.is_10b5_1 === true,
+    is_sell_to_cover: raw.is_sell_to_cover === true,
+    is_option_sale: raw.is_option_sale === true,
+    parser_version: Number(raw.parser_version) || 1,
+  };
   return {
     id: String(raw.id),
     company_id: String(raw.company_id),
@@ -58,12 +72,19 @@ export function normalizeRealtimeTransaction(raw: Record<string, unknown>): Insi
     transaction_date: String(raw.transaction_date),
     reporting_owner_name: String(raw.reporting_owner_name ?? ""),
     owner_title: (raw.owner_title as string | null) ?? null,
-    transaction_code: String(raw.transaction_code ?? ""),
     shares,
     price_per_share: price,
     total_value: raw.total_value !== undefined && raw.total_value !== null ? Number(raw.total_value) : shares * price,
     is_direct: (raw.is_direct as boolean | null) ?? null,
-    post_transaction_shares: post === null || post === undefined ? null : Number(post),
+    post_transaction_shares: postShares,
+    insider_cik: (raw.insider_cik as string | null) ?? null,
+    ...flags,
+    signal_direction: raw.signal_direction !== undefined && raw.signal_direction !== null
+      ? Number(raw.signal_direction)
+      : signalDirection(flags),
+    stake_change_pct: raw.stake_change_pct !== undefined && raw.stake_change_pct !== null
+      ? Number(raw.stake_change_pct)
+      : stakeChangePct(code, shares, postShares),
   };
 }
 
@@ -95,6 +116,9 @@ export function useRealtimeFeed(): { status: RealtimeStatus; freshIds: ReadonlyS
       .channel("feed:insider_transactions")
       .on("postgres_changes", { event: "INSERT", schema: "public", table: "insider_transactions" }, async (payload) => {
         const row = normalizeRealtimeTransaction(payload.new as Record<string, unknown>);
+        // The market-wide backfill inserts months-old filings: they belong further
+        // down the feed (where a refresh will show them), not at the top.
+        if (Date.now() - Date.parse(row.filing_date) > LIVE_WINDOW_MS) return;
         const company = await fetchCompanySummary(row.company_id).catch(() => null);
         if (!active) return;
         const item: FeedItem = { ...row, company };
@@ -104,7 +128,8 @@ export function useRealtimeFeed(): { status: RealtimeStatus; freshIds: ReadonlyS
           return { ...data, pages: [[item, ...first], ...rest] };
         });
         queryClient.invalidateQueries({ queryKey: queryKeys.company(row.company_id) });
-        queryClient.invalidateQueries({ queryKey: ["leaderboard"] });
+        if (row.signal_direction !== 0) queryClient.invalidateQueries({ queryKey: ["leaderboard"] });
+        if (row.signal_direction === 1) queryClient.invalidateQueries({ queryKey: ["feed", "biggest-buys"] });
 
         setFreshIds((prev) => new Set(prev).add(item.id));
         timers.push(

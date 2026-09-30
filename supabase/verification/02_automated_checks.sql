@@ -404,6 +404,7 @@ do $$
 declare
   n      integer;
   v_ids  text[];
+  sig    record;
 begin
   insert into public.companies (ticker, cik, company_name) values ('ZZOLD', '9999999980', 'Existing Co.');
 
@@ -433,6 +434,17 @@ begin
   assert public.claim_ingestion_lease('test', 'run-b', 60), 'claim after release';
   update public.ingestion_lease set expires_at = now() - interval '1 second' where name = 'test';
   assert public.claim_ingestion_lease('test', 'run-c', 60), 'claim after expiry';
+
+  -- Parser v3 re-checks v2 discretionary sales (Eve) for option exercises; other v2 rows are final.
+  select count(*) into n from public.reparse_candidates(1000, 3::smallint) r where r.accession_number = '9999999990-26-000005';
+  assert n = 1, 'v2 discretionary sale should be re-parsed by v3';
+  select count(*) into n from public.reparse_candidates(1000, 3::smallint) r where r.accession_number = '9999999990-26-000001';
+  assert n = 0, 'v2 buys do not need re-parsing';
+  update public.insider_transactions set is_option_sale = true, parser_version = 3 where accession_number = '9999999990-26-000005';
+  assert (select signal_direction from public.insider_transactions where accession_number = '9999999990-26-000005') = 0,
+    'an exercise-and-sell sale is routine';
+  select * into sig from public.company_signal((select id from public.companies where ticker = 'ZZSIG'));
+  assert sig.sellers = 0 and sig.score = 93.6, format('option sale still counted: %s', row_to_json(sig));
 
   -- Hank's v1 row (ZZSIG) needs re-parsing until a v2 run has processed it.
   select count(*) into n from public.reparse_candidates(1000, 2::smallint) r where r.accession_number = '9999999990-26-000009';

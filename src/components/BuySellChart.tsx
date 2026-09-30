@@ -1,6 +1,7 @@
 /**
- * Interactive Victory Native (Skia) bar chart of monthly open-market insider
- * buying vs. selling. Press and drag across the chart to inspect a month.
+ * Interactive Victory Native (Skia) bar chart of monthly insider buying vs.
+ * selling: discretionary open-market buys (green) and sales (red), plus routine
+ * 10b5-1 plan and tax sales (grey). Press and drag to inspect a month.
  */
 
 import { useFont } from "@shopify/react-native-skia";
@@ -15,6 +16,9 @@ import { colors, spacing } from "../theme";
 import { AppText } from "./AppText";
 
 export type ChartMetric = "value" | "count";
+
+/** colors.neutral at 45% — routine sales stay visible without competing with real trades. */
+const ROUTINE_COLOR = "rgba(148,163,184,0.45)";
 
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const interFont = require("@expo-google-fonts/inter/400Regular/Inter_400Regular.ttf");
@@ -35,11 +39,12 @@ export function BuySellChart({ data, metric, height = 220 }: Props) {
         label: d.label,
         buys: metric === "value" ? d.buys : d.buyCount,
         sells: metric === "value" ? d.sells : d.sellCount,
+        routine: metric === "value" ? d.routineSells : d.routineSellCount,
       })),
     [data, metric],
   );
 
-  const { state } = useChartPressState({ x: "", y: { buys: 0, sells: 0 } });
+  const { state } = useChartPressState({ x: "", y: { buys: 0, sells: 0, routine: 0 } });
   useAnimatedReaction(
     () => (state.isActive.value ? state.matchedIndex.value : -1),
     (index, previous) => {
@@ -48,9 +53,12 @@ export function BuySellChart({ data, metric, height = 220 }: Props) {
   );
 
   const format = (v: number) => (metric === "value" ? formatCompactCurrency(v) : `${Math.round(v)}`);
-  const totals = chartData.reduce((acc, d) => ({ buys: acc.buys + d.buys, sells: acc.sells + d.sells }), { buys: 0, sells: 0 });
+  const totals = chartData.reduce(
+    (acc, d) => ({ buys: acc.buys + d.buys, sells: acc.sells + d.sells, routine: acc.routine + d.routine }),
+    { buys: 0, sells: 0, routine: 0 },
+  );
   const focus = selected !== null ? chartData[selected] : undefined;
-  const hasActivity = totals.buys > 0 || totals.sells > 0;
+  const hasActivity = totals.buys > 0 || totals.sells > 0 || totals.routine > 0;
 
   return (
     <View>
@@ -69,15 +77,26 @@ export function BuySellChart({ data, metric, height = 220 }: Props) {
               Sells {format(focus ? focus.sells : totals.sells)}
             </AppText>
           </View>
+          <View style={styles.legendItem}>
+            <View style={[styles.swatch, { backgroundColor: ROUTINE_COLOR }]} />
+            <AppText variant="caption" tabular>
+              Planned & tax sales {format(focus ? focus.routine : totals.routine)}
+            </AppText>
+          </View>
         </View>
       </View>
 
-      <View style={{ height }} accessibilityLabel={`Insider buys ${format(totals.buys)} and sells ${format(totals.sells)} over ${data.length} months`}>
+      <View
+        style={{ height }}
+        accessibilityLabel={`Insider buys ${format(totals.buys)}, sells ${format(totals.sells)} and planned or tax sales ${
+          format(totals.routine)
+        } over ${data.length} months`}
+      >
         {hasActivity ? (
           <CartesianChart
             data={chartData}
             xKey="label"
-            yKeys={["buys", "sells"]}
+            yKeys={["buys", "sells", "routine"]}
             chartPressState={state}
             domain={{ y: [0] }}
             domainPadding={{ left: 14, right: 14, top: 20 }}
@@ -101,12 +120,13 @@ export function BuySellChart({ data, metric, height = 220 }: Props) {
               >
                 <BarGroup.Bar points={points.buys} color={colors.buy} animate={{ type: "timing", duration: 450 }} />
                 <BarGroup.Bar points={points.sells} color={colors.sell} animate={{ type: "timing", duration: 450 }} />
+                <BarGroup.Bar points={points.routine} color={ROUTINE_COLOR} animate={{ type: "timing", duration: 450 }} />
               </BarGroup>
             )}
           </CartesianChart>
         ) : (
           <View style={styles.empty}>
-            <AppText variant="caption">No open-market insider buys or sells in this period.</AppText>
+            <AppText variant="caption">No insider buys or sells in this period.</AppText>
           </View>
         )}
       </View>

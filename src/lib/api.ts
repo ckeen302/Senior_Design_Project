@@ -5,13 +5,24 @@
  */
 
 import { FunctionsHttpError } from "@supabase/supabase-js";
-import type { Tables } from "../types/database";
+import type { Database, Tables } from "../types/database";
 import { ApiError, toApiError } from "./errors";
+import { collapseGroupFilings, MIN_SIGNAL_VALUE } from "./signal";
 import { supabase } from "./supabase";
 
-export type FeedFilter = "all" | "buys" | "sells" | "whales";
+/**
+ * key    discretionary open-market buys and sells of $10k+ (the default)
+ * buys   discretionary open-market buys
+ * sells  discretionary open-market sales (no 10b5-1 plan or tax sales)
+ * whales discretionary buys and sells of $1M+
+ * all    every Form 4, including awards, exercises and routine sales
+ */
+export type FeedFilter = "key" | "buys" | "sells" | "whales" | "all";
 export const FEED_PAGE_SIZE = 25;
 export const WHALE_MIN_VALUE = 1_000_000;
+
+const TRANSACTION_COLUMNS =
+  "id, company_id, accession_number, filing_date, transaction_date, reporting_owner_name, owner_title, transaction_code, shares, price_per_share, total_value, is_direct, post_transaction_shares, insider_cik, is_10b5_1, is_sell_to_cover, is_option_sale, parser_version, signal_direction, stake_change_pct";
 
 export type Company = Tables<"companies">;
 export type SentimentScore = Tables<"sentiment_scores">;
@@ -21,10 +32,20 @@ export type FeedItem = InsiderTransaction & { company: CompanySummary | null };
 export type CompanyDetail = Company & { sentiment: SentimentScore | null };
 export type LeaderboardEntry = SentimentScore & { company: CompanySummary | null };
 export type Profile = Tables<"profiles">;
+export type SignalContribution = Database["public"]["Functions"]["company_signal_breakdown"]["Returns"][number];
+export type BigBuy = FeedItem & { relatedFilers: number };
+export type SignalDirection = "buying" | "selling";
+export type TradeScope = "key" | "all";
 
 export type WatchlistSentiment = Pick<
   SentimentScore,
-  "sentiment_index" | "sentiment_label" | "wisi_score" | "buy_count" | "sell_count"
+  | "signal_score"
+  | "signal_label"
+  | "signal_buyers"
+  | "signal_sellers"
+  | "signal_buy_value"
+  | "signal_sell_value"
+  | "sentiment_index"
 >;
 export interface WatchlistItem {
   id: string;
@@ -39,14 +60,19 @@ export interface ActivityPoint {
   sells: number;
   buyCount: number;
   sellCount: number;
+  /** 10b5-1 plan and sell-to-cover sales. */
+  routineSells: number;
+  routineSellCount: number;
 }
 
 export const queryKeys = {
   feed: (filter: FeedFilter) => ["feed", filter] as const,
+  biggestBuys: (days: number) => ["feed", "biggest-buys", days] as const,
   company: (id: string) => ["company", id] as const,
-  companyTransactions: (id: string) => ["company", id, "transactions"] as const,
+  companyTransactions: (id: string, scope: TradeScope) => ["company", id, "transactions", scope] as const,
+  signalBreakdown: (id: string) => ["company", id, "signal"] as const,
   activity: (id: string, months: number) => ["company", id, "activity", months] as const,
-  leaderboard: (direction: "bullish" | "bearish") => ["leaderboard", direction] as const,
+  leaderboard: (direction: SignalDirection) => ["leaderboard", direction] as const,
   watchlist: ["watchlist"] as const,
   search: (term: string) => ["search", term] as const,
   quote: (symbol: string) => ["quote", symbol] as const,
@@ -62,12 +88,11 @@ function one<T>(value: T | T[] | null | undefined): T | null {
 export async function fetchFeedPage(filter: FeedFilter, page: number): Promise<FeedItem[]> {
   let query = supabase
     .from("insider_transactions")
-    .select(
-      "id, company_id, accession_number, filing_date, transaction_date, reporting_owner_name, owner_title, transaction_code, shares, price_per_share, total_value, is_direct, post_transaction_shares, company:companies(id, ticker, company_name, cik)",
-    );
-  if (filter === "buys") query = query.eq("transaction_code", "P");
-  if (filter === "sells") query = query.eq("transaction_code", "S");
-  if (filter === "whales") query = query.in("transaction_code", ["P", "S"]).gte("total_value", WHALE_MIN_VALUE);
+    .select(`${TRANSACTION_COLUMNS}, company:companies(id, ticker, company_name, cik)`);
+  if (filter === "key") query = query.neq("signal_direction", 0).gte("total_value", MIN_SIGNAL_VALUE);
+  if (filter === "buys") query = query.eq("signal_direction", 1);
+  if (filter === "sells") query = query.eq("signal_direction", -1);
+  if (filter === "whales") query = query.neq("signal_direction", 0).gte("total_value", WHALE_MIN_VALUE);
 
   const from = page * FEED_PAGE_SIZE;
   const { data, error, status } = await query
@@ -79,17 +104,38 @@ export async function fetchFeedPage(filter: FeedFilter, page: number): Promise<F
 }
 
 /** Does a realtime row belong in the feed for this filter? */
-export function matchesFeedFilter(item: Pick<InsiderTransaction, "transaction_code" | "total_value">, filter: FeedFilter) {
+export function matchesFeedFilter(
+  item: Pick<InsiderTransaction, "signal_direction" | "total_value">,
+  filter: FeedFilter,
+) {
   switch (filter) {
+    case "key":
+      return item.signal_direction !== 0 && item.total_value >= MIN_SIGNAL_VALUE;
     case "buys":
-      return item.transaction_code === "P";
+      return item.signal_direction === 1;
     case "sells":
-      return item.transaction_code === "S";
+      return item.signal_direction === -1;
     case "whales":
-      return (item.transaction_code === "P" || item.transaction_code === "S") && item.total_value >= WHALE_MIN_VALUE;
+      return item.signal_direction !== 0 && item.total_value >= WHALE_MIN_VALUE;
     default:
       return true;
   }
+}
+
+/** The largest discretionary insider purchases filed in the last `days` days. */
+export async function fetchBiggestBuys(days = 7, limit = 10): Promise<BigBuy[]> {
+  const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
+  const { data, error, status } = await supabase
+    .from("insider_transactions")
+    .select(`${TRANSACTION_COLUMNS}, company:companies(id, ticker, company_name, cik)`)
+    .eq("signal_direction", 1)
+    .gte("filing_date", since)
+    .gte("total_value", MIN_SIGNAL_VALUE)
+    .order("total_value", { ascending: false })
+    .limit(limit * 3);
+  if (error) throw toApiError(error, status);
+  const rows = (data ?? []).map((row) => ({ ...row, company: one(row.company) }));
+  return collapseGroupFilings(rows).slice(0, limit);
 }
 
 const companySummaryCache = new Map<string, CompanySummary>();
@@ -119,17 +165,33 @@ export async function fetchCompany(id: string): Promise<CompanyDetail> {
   return { ...data, sentiment: one(data.sentiment) };
 }
 
-export async function fetchCompanyTransactions(companyId: string, limit = 20): Promise<InsiderTransaction[]> {
-  const { data, error, status } = await supabase
-    .from("insider_transactions")
-    .select(
-      "id, company_id, accession_number, filing_date, transaction_date, reporting_owner_name, owner_title, transaction_code, shares, price_per_share, total_value, is_direct, post_transaction_shares",
-    )
-    .eq("company_id", companyId)
-    .order("filing_date", { ascending: false })
-    .limit(limit);
+export async function fetchCompanyTransactions(
+  companyId: string,
+  scope: TradeScope = "key",
+  limit = 20,
+): Promise<InsiderTransaction[]> {
+  let query = supabase.from("insider_transactions").select(TRANSACTION_COLUMNS).eq("company_id", companyId);
+  if (scope === "key") query = query.neq("signal_direction", 0);
+  const { data, error, status } = await query.order("filing_date", { ascending: false }).limit(limit);
   if (error) throw toApiError(error, status);
   return data ?? [];
+}
+
+/** Per-insider contributions to the Insider Signal ("Why this score"). */
+export async function fetchSignalBreakdown(companyId: string): Promise<SignalContribution[]> {
+  const { data, error, status } = await supabase.rpc("company_signal_breakdown", { target_company_id: companyId });
+  if (error) throw toApiError(error, status);
+  return (data ?? []).map((row) => ({
+    ...row,
+    total_value: Number(row.total_value) || 0,
+    weighted_value: Number(row.weighted_value) || 0,
+    avg_price: row.avg_price === null ? null : Number(row.avg_price),
+    stake_change_pct: row.stake_change_pct === null ? null : Number(row.stake_change_pct),
+    role_weight: Number(row.role_weight),
+    size_factor: Number(row.size_factor),
+    conviction: Number(row.conviction),
+    points: Number(row.points) || 0,
+  }));
 }
 
 const monthLabel = new Intl.DateTimeFormat("en-US", { month: "short" });
@@ -149,18 +211,23 @@ export async function fetchInsiderActivity(companyId: string, months = 12): Prom
       sells: Number(row.sell_value) || 0,
       buyCount: Number(row.buy_count) || 0,
       sellCount: Number(row.sell_count) || 0,
+      routineSells: Number(row.routine_sell_value) || 0,
+      routineSellCount: Number(row.routine_sell_count) || 0,
     };
   });
 }
 
-export async function fetchLeaderboard(direction: "bullish" | "bearish", limit = 30): Promise<LeaderboardEntry[]> {
-  const ascending = direction === "bearish";
-  const { data, error, status } = await supabase
+/** Companies with the strongest insider buying (or selling) over the last 90 days. */
+export async function fetchLeaderboard(direction: SignalDirection, limit = 40): Promise<LeaderboardEntry[]> {
+  const buying = direction === "buying";
+  let query = supabase
     .from("sentiment_scores")
     .select("*, company:companies(id, ticker, company_name, cik)")
-    .or("buy_count.gt.0,sell_count.gt.0")
-    .order("sentiment_index", { ascending })
-    .order("net_weighted_value", { ascending })
+    .neq("signal_label", "No signal");
+  query = buying ? query.gt("signal_score", 50) : query.lt("signal_score", 50);
+  const { data, error, status } = await query
+    .order("signal_score", { ascending: !buying })
+    .order(buying ? "signal_buy_value" : "signal_sell_value", { ascending: false })
     .limit(limit);
   if (error) throw toApiError(error, status);
   return (data ?? []).map((row) => ({ ...row, company: one(row.company) }));
@@ -170,7 +237,7 @@ export async function fetchWatchlist(): Promise<WatchlistItem[]> {
   const { data, error, status } = await supabase
     .from("watchlists")
     .select(
-      "id, created_at, company:companies(id, ticker, company_name, cik, sentiment:sentiment_scores(sentiment_index, sentiment_label, wisi_score, buy_count, sell_count))",
+      "id, created_at, company:companies(id, ticker, company_name, cik, sentiment:sentiment_scores(signal_score, signal_label, signal_buyers, signal_sellers, signal_buy_value, signal_sell_value, sentiment_index))",
     )
     .order("created_at", { ascending: false });
   if (error) throw toApiError(error, status);

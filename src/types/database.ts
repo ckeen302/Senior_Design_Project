@@ -22,6 +22,7 @@ export type Database = {
           created_at: string;
           last_synced_at: string | null;
           market_cap_updated_at: string | null;
+          market_cap_checked_at: string | null;
         };
         Insert: {
           id?: string;
@@ -32,6 +33,7 @@ export type Database = {
           created_at?: string;
           last_synced_at?: string | null;
           market_cap_updated_at?: string | null;
+          market_cap_checked_at?: string | null;
         };
         Update: {
           id?: string;
@@ -42,6 +44,7 @@ export type Database = {
           created_at?: string;
           last_synced_at?: string | null;
           market_cap_updated_at?: string | null;
+          market_cap_checked_at?: string | null;
         };
         Relationships: [];
       };
@@ -61,6 +64,16 @@ export type Database = {
           is_direct: boolean | null;
           post_transaction_shares: number | null;
           created_at: string;
+          insider_cik: string | null;
+          is_10b5_1: boolean;
+          is_sell_to_cover: boolean;
+          /** Sale of shares just acquired by exercising options (exercise-and-sell). */
+          is_option_sale: boolean;
+          parser_version: number;
+          /** +1 discretionary open-market buy, -1 discretionary open-market sale, 0 routine / other (generated). */
+          signal_direction: number;
+          /** Buys: % increase of the holding; sales: % of the holding sold (generated). */
+          stake_change_pct: number | null;
         };
         Insert: {
           id?: string;
@@ -77,6 +90,13 @@ export type Database = {
           is_direct?: boolean | null;
           post_transaction_shares?: number | null;
           created_at?: string;
+          insider_cik?: string | null;
+          is_10b5_1?: boolean;
+          is_sell_to_cover?: boolean;
+          is_option_sale?: boolean;
+          parser_version?: number;
+          signal_direction?: never;
+          stake_change_pct?: never;
         };
         Update: {
           id?: string;
@@ -93,6 +113,13 @@ export type Database = {
           is_direct?: boolean | null;
           post_transaction_shares?: number | null;
           created_at?: string;
+          insider_cik?: string | null;
+          is_10b5_1?: boolean;
+          is_sell_to_cover?: boolean;
+          is_option_sale?: boolean;
+          parser_version?: number;
+          signal_direction?: never;
+          stake_change_pct?: never;
         };
         Relationships: [
           {
@@ -115,6 +142,14 @@ export type Database = {
           sell_count: number;
           sentiment_index: number | null;
           sentiment_label: string | null;
+          signal_score: number;
+          signal_label: string;
+          signal_buyers: number;
+          signal_sellers: number;
+          signal_buy_value: number;
+          signal_sell_value: number;
+          signal_cluster_points: number;
+          signal_last_trade_date: string | null;
         };
         Insert: {
           id?: string;
@@ -126,6 +161,14 @@ export type Database = {
           sell_count?: number;
           sentiment_index?: never;
           sentiment_label?: never;
+          signal_score?: number;
+          signal_label?: string;
+          signal_buyers?: number;
+          signal_sellers?: number;
+          signal_buy_value?: number;
+          signal_sell_value?: number;
+          signal_cluster_points?: number;
+          signal_last_trade_date?: string | null;
         };
         Update: {
           id?: string;
@@ -137,6 +180,14 @@ export type Database = {
           sell_count?: number;
           sentiment_index?: never;
           sentiment_label?: never;
+          signal_score?: number;
+          signal_label?: string;
+          signal_buyers?: number;
+          signal_sellers?: number;
+          signal_buy_value?: number;
+          signal_sell_value?: number;
+          signal_cluster_points?: number;
+          signal_last_trade_date?: string | null;
         };
         Relationships: [
           {
@@ -222,6 +273,44 @@ export type Database = {
           sell_shares: number;
           buy_count: number;
           sell_count: number;
+          routine_sell_value: number;
+          routine_sell_count: number;
+        }[];
+      };
+      company_signal_breakdown: {
+        Args: { target_company_id: string; as_of?: string };
+        Returns: {
+          insider_key: string;
+          insider_name: string;
+          insider_title: string | null;
+          direction: number;
+          trade_count: number;
+          shares: number;
+          total_value: number;
+          weighted_value: number;
+          avg_price: number | null;
+          stake_change_pct: number | null;
+          first_trade_date: string;
+          last_trade_date: string;
+          role_weight: number;
+          size_factor: number;
+          conviction: number;
+          points: number;
+        }[];
+      };
+      company_signal: {
+        Args: { target_company_id: string; as_of?: string };
+        Returns: {
+          score: number;
+          label: string;
+          buyers: number;
+          sellers: number;
+          buy_value: number;
+          sell_value: number;
+          buy_points: number;
+          sell_points: number;
+          cluster_points: number;
+          last_trade_date: string | null;
         }[];
       };
     };

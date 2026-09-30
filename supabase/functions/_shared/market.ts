@@ -31,7 +31,14 @@ import {
 } from "./edgar.ts";
 import { fetchMarketCapUsd } from "./finnhub.ts";
 import { type Form4Document, type Form4Summary, parseForm4Xml, summarizeForm4 } from "./form4.ts";
-import { buildTransactionRow, findWhaleTrades, PARSER_VERSION, type TransactionInsert, type WhaleTrade } from "./ingest.ts";
+import {
+  buildTransactionRow,
+  findWhaleTrades,
+  MIN_REUSABLE_PARSER_VERSION,
+  PARSER_VERSION,
+  type TransactionInsert,
+  type WhaleTrade,
+} from "./ingest.ts";
 
 export type ProcessedStatus = "stored" | "no_transactions" | "no_ticker" | "amendment" | "unparseable" | "missing";
 
@@ -357,7 +364,7 @@ export async function runMarketIngestion(
         report.latest.pages++;
         report.latest.seen += pointers.length;
         if (pointers.length === 0) break;
-        const pending = await repo.unprocessedAccessions(pointers.map((p) => p.accession), PARSER_VERSION);
+        const pending = await repo.unprocessedAccessions(pointers.map((p) => p.accession), MIN_REUSABLE_PARSER_VERSION);
         for (const p of pointers) {
           if (pending.has(p.accession) && !queued.has(p.accession)) {
             queued.add(p.accession);
@@ -408,7 +415,7 @@ export async function runMarketIngestion(
         }
 
         const pointers = parseDailyFormIndex(index);
-        const unprocessed = await repo.unprocessedAccessions(pointers.map((p) => p.accession), PARSER_VERSION);
+        const unprocessed = await repo.unprocessedAccessions(pointers.map((p) => p.accession), MIN_REUSABLE_PARSER_VERSION);
         const todo = pointers.filter((p) => unprocessed.has(p.accession));
         const { handled: processed, failed } = await processAll(todo, false, true);
         // Failed downloads keep the day open so the next run retries them.

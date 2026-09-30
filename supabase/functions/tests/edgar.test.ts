@@ -139,6 +139,9 @@ Deno.test("company names from EDGAR are tidied for display", () => {
   assertEquals(prettifyCompanyName("COSTCO WHOLESALE CORP /NEW"), "Costco Wholesale Corp");
   assertEquals(prettifyCompanyName("AE RED HOLDINGS LLC"), "Ae Red Holdings LLC");
   assertEquals(prettifyCompanyName("ELI LILLY & Co"), "Eli Lilly & Co");
+  assertEquals(prettifyCompanyName("DICK'S SPORTING GOODS, INC."), "Dick's Sporting Goods, Inc.");
+  assertEquals(prettifyCompanyName("O'REILLY AUTOMOTIVE INC"), "O'Reilly Automotive Inc");
+  assertEquals(prettifyCompanyName("MACY'S, INC."), "Macy's, Inc.");
   assertEquals(prettifyCompanyName("Tesla, Inc."), "Tesla, Inc.");
   assertEquals(prettifyCompanyName("NVIDIA Corporation"), "NVIDIA Corporation");
 });

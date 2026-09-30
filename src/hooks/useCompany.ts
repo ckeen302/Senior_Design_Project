@@ -1,4 +1,4 @@
-/** Company detail data (profile, WISI score, filings, chart) with live updates. */
+/** Company detail data (profile, scores, filings, chart) with live updates. */
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect } from "react";
@@ -7,8 +7,10 @@ import {
   fetchCompany,
   fetchCompanyTransactions,
   fetchInsiderActivity,
+  fetchSignalBreakdown,
   queryKeys,
   type SentimentScore,
+  type TradeScope,
 } from "../lib/api";
 import { supabase } from "../lib/supabase";
 
@@ -16,10 +18,17 @@ export function useCompany(companyId: string) {
   return useQuery({ queryKey: queryKeys.company(companyId), queryFn: () => fetchCompany(companyId) });
 }
 
-export function useCompanyTransactions(companyId: string) {
+export function useCompanyTransactions(companyId: string, scope: TradeScope) {
   return useQuery({
-    queryKey: queryKeys.companyTransactions(companyId),
-    queryFn: () => fetchCompanyTransactions(companyId),
+    queryKey: queryKeys.companyTransactions(companyId, scope),
+    queryFn: () => fetchCompanyTransactions(companyId, scope),
+  });
+}
+
+export function useSignalBreakdown(companyId: string) {
+  return useQuery({
+    queryKey: queryKeys.signalBreakdown(companyId),
+    queryFn: () => fetchSignalBreakdown(companyId),
   });
 }
 
@@ -53,8 +62,9 @@ export function useCompanyRealtime(companyId: string) {
         "postgres_changes",
         { event: "INSERT", schema: "public", table: "insider_transactions", filter: `company_id=eq.${companyId}` },
         () => {
-          queryClient.invalidateQueries({ queryKey: queryKeys.companyTransactions(companyId) });
+          queryClient.invalidateQueries({ queryKey: ["company", companyId, "transactions"] });
           queryClient.invalidateQueries({ queryKey: ["company", companyId, "activity"] });
+          queryClient.invalidateQueries({ queryKey: queryKeys.signalBreakdown(companyId) });
         },
       )
       .subscribe();

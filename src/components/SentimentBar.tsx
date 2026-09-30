@@ -1,14 +1,12 @@
 import { StyleSheet, View } from "react-native";
-import { type SentimentLabel, sentimentColor } from "../lib/wisi";
 import { colors, fonts } from "../theme";
 import { AppText } from "./AppText";
 
-/** Compact 0–100 sentiment meter for list rows; fills outward from the neutral midpoint. */
-export function SentimentBar({ index, label }: { index: number; label: SentimentLabel }) {
-  const color = sentimentColor(label);
+/** Compact 0–100 score meter for list rows; fills outward from the neutral midpoint. */
+export function SentimentBar({ index, label, color }: { index: number; label: string; color: string }) {
   const clamped = Math.max(0, Math.min(100, index));
   return (
-    <View style={styles.wrap} accessibilityLabel={`Sentiment ${clamped.toFixed(0)}, ${label}`}>
+    <View style={styles.wrap} accessibilityLabel={`Score ${clamped.toFixed(0)}, ${label}`}>
       <View style={styles.track}>
         <View
           style={[

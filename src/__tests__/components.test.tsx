@@ -17,23 +17,40 @@ const trade = {
   total_value: 1_250_000,
   is_direct: true,
   post_transaction_shares: 50000,
+  insider_cik: "0000000009",
+  is_10b5_1: false,
+  is_sell_to_cover: false,
+  is_option_sale: false,
+  parser_version: 3,
+  signal_direction: 1,
+  stake_change_pct: 25,
 };
 
+const acme = { id: "c1", ticker: "ACME", company_name: "Acme Corp", cik: "0000000001" };
+const NOW = Date.parse("2026-09-28T12:00:00Z");
+
 describe("TradeCard", () => {
-  it("shows the owner, title, currency value, badge and relative filing time", async () => {
+  it("tells the trade in plain English: who, what, how much, stake change, when", async () => {
+    await render(<TradeCard trade={trade} company={acme} now={NOW} relatedFilers={1} />);
+    expect(screen.getByText("ACME")).toBeTruthy();
+    expect(screen.getByText("Bought $1.3M")).toBeTruthy();
+    expect(screen.getByText("Doe Jane · CEO")).toBeTruthy();
+    expect(screen.getByText("10,000 sh @ $125.00 · +25% stake")).toBeTruthy();
+    expect(screen.getByText("Open-market buy")).toBeTruthy();
+    expect(screen.getByText("+1 related filer")).toBeTruthy();
+    expect(screen.getByText("3h ago")).toBeTruthy();
+  });
+
+  it("marks pre-planned and tax sales as routine", async () => {
     await render(
       <TradeCard
-        trade={trade}
-        company={{ id: "c1", ticker: "ACME", company_name: "Acme Corp", cik: "0000000001" }}
-        now={Date.parse("2026-09-28T12:00:00Z")}
+        trade={{ ...trade, transaction_code: "S", is_10b5_1: true, signal_direction: 0, stake_change_pct: 2 }}
+        company={acme}
+        now={NOW}
       />,
     );
-    expect(screen.getByText("ACME")).toBeTruthy();
-    expect(screen.getByText("Doe Jane")).toBeTruthy();
-    expect(screen.getByText("Chief Executive Officer, Director")).toBeTruthy();
-    expect(screen.getByText("$1,250,000")).toBeTruthy();
-    expect(screen.getByText("Buy")).toBeTruthy();
-    expect(screen.getByText(/Filed 3h ago/)).toBeTruthy();
+    expect(screen.getByText("Sold $1.3M")).toBeTruthy();
+    expect(screen.getByText("10b5-1 plan · routine")).toBeTruthy();
   });
 });
 

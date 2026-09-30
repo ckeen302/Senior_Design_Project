@@ -7,24 +7,21 @@ import { Card } from "../components/Card";
 import { SegmentedControl } from "../components/SegmentedControl";
 import { SentimentBar } from "../components/SentimentBar";
 import { EmptyState, ErrorState, LoadingView } from "../components/StateViews";
-import { fetchLeaderboard, type LeaderboardEntry, queryKeys } from "../lib/api";
+import { fetchLeaderboard, type LeaderboardEntry, queryKeys, type SignalDirection } from "../lib/api";
 import { errorMessage } from "../lib/errors";
-import { formatCompactCurrency } from "../lib/format";
-import { normalizeLabel, sentimentColor } from "../lib/wisi";
+import { formatDay } from "../lib/format";
+import { normalizeSignalLabel, signalColor, signalSummary } from "../lib/signal";
 import { colors, fonts, radius, spacing } from "../theme";
-
-type Direction = "bullish" | "bearish";
-
-const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
 
 export function SignalsScreen() {
   const navigation = useNavigation();
-  const [direction, setDirection] = useState<Direction>("bullish");
+  const [direction, setDirection] = useState<SignalDirection>("buying");
   const board = useQuery({ queryKey: queryKeys.leaderboard(direction), queryFn: () => fetchLeaderboard(direction) });
 
   const renderItem = ({ item, index }: { item: LeaderboardEntry; index: number }) => {
-    const score = item.sentiment_index ?? 50;
-    const label = normalizeLabel(item.sentiment_label, score);
+    const score = Number(item.signal_score);
+    const label = normalizeSignalLabel(item.signal_label, score, item.signal_buyers + item.signal_sellers);
+    const color = signalColor(label);
     return (
       <Pressable
         style={({ pressed }) => [styles.row, pressed && styles.pressed]}
@@ -32,7 +29,10 @@ export function SignalsScreen() {
           item.company && navigation.navigate("CompanyDetail", { companyId: item.company.id, ticker: item.company.ticker })
         }
         accessibilityRole="button"
-        accessibilityLabel={`${index + 1}. ${item.company?.ticker}, sentiment ${score.toFixed(0)}, ${label}`}
+        accessibilityLabel={`${index + 1}. ${item.company?.ticker}, Insider Signal ${score.toFixed(0)}, ${label}. ${
+          signalSummary(item)
+        }`}
+        testID={`signal-row-${item.company?.ticker}`}
       >
         <AppText style={styles.rank} tabular>
           {index + 1}
@@ -40,16 +40,20 @@ export function SignalsScreen() {
         <View style={styles.rowBody}>
           <View style={styles.rowTop}>
             <AppText variant="bodyStrong">{item.company?.ticker ?? "—"}</AppText>
-            <AppText style={[styles.label, { color: sentimentColor(label) }]}>{label}</AppText>
+            <AppText style={[styles.label, { color }]}>{label}</AppText>
           </View>
           <AppText variant="caption" numberOfLines={1}>
             {item.company?.company_name}
           </AppText>
-          <SentimentBar index={score} label={label} />
-          <AppText variant="caption" color={colors.textFaint}>
-            90d: {plural(item.buy_count, "buy")} · {plural(item.sell_count, "sell")} · net weighted{" "}
-            {formatCompactCurrency(item.net_weighted_value)}
+          <SentimentBar index={score} label={label} color={color} />
+          <AppText variant="caption" color={colors.text}>
+            {signalSummary(item)}
           </AppText>
+          {item.signal_last_trade_date ? (
+            <AppText variant="caption" color={colors.textFaint}>
+              Latest trade {formatDay(item.signal_last_trade_date)}
+            </AppText>
+          ) : null}
         </View>
       </Pressable>
     );
@@ -67,16 +71,21 @@ export function SignalsScreen() {
       ListHeaderComponent={
         <View style={styles.header}>
           <Card style={styles.explainer}>
-            <AppText variant="bodyStrong">Weighted Insider Sentiment Index</AppText>
+            <AppText variant="bodyStrong">How the Insider Signal works</AppText>
             <AppText variant="caption">
-              Each open-market buy (+) or sell (−) from the last 90 days is weighted by the insider's role — CEO/CFO 1.5×,
-              directors 1.0×, officers & 10% owners 0.7× — and scaled by market cap into a 0–100 score.
+              Every stock starts at 50. When insiders buy their own company's stock on the open market the score goes up;
+              when they choose to sell it goes down. Bigger trades, top executives, several insiders at once and recent
+              trades move it more.
+            </AppText>
+            <AppText variant="caption">
+              Pre-planned 10b5-1 sales, sales to cover taxes, options cashed out the same day and stock awards are
+              ignored — they are pay, not opinions. Open any stock to see exactly why it scored what it did.
             </AppText>
           </Card>
           <SegmentedControl
             options={[
-              { value: "bullish", label: "Most bullish" },
-              { value: "bearish", label: "Most bearish" },
+              { value: "buying", label: "Insiders buying" },
+              { value: "selling", label: "Insiders selling" },
             ]}
             value={direction}
             onChange={setDirection}
@@ -92,7 +101,7 @@ export function SignalsScreen() {
           <EmptyState
             icon="speedometer-outline"
             title="No signals yet"
-            message="Scores appear once open-market insider trades have been ingested."
+            message="Scores appear as open-market insider trades are ingested from the SEC."
           />
         )
       }
@@ -114,7 +123,7 @@ const styles = StyleSheet.create({
     padding: spacing.lg,
   },
   pressed: { opacity: 0.85 },
-  rank: { fontFamily: fonts.bold, fontSize: 16, color: colors.textFaint, width: 22, textAlign: "center", marginTop: 1 },
+  rank: { fontFamily: fonts.bold, fontSize: 16, color: colors.textFaint, width: 26, textAlign: "center", marginTop: 1 },
   rowBody: { flex: 1, gap: 4 },
   rowTop: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
   label: { fontFamily: fonts.semibold, fontSize: 12, letterSpacing: 0.6, textTransform: "uppercase" },

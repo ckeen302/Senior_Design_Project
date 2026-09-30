@@ -20,14 +20,19 @@ describe("client key guard", () => {
 });
 
 describe("feed filters", () => {
-  const trade = (code: string, value: number) => ({ transaction_code: code, total_value: value });
+  const trade = (direction: number, value: number) => ({ signal_direction: direction, total_value: value });
   it("classifies realtime rows for each tab", () => {
-    expect(matchesFeedFilter(trade("A", 0), "all")).toBe(true);
-    expect(matchesFeedFilter(trade("P", 10), "buys")).toBe(true);
-    expect(matchesFeedFilter(trade("S", 10), "buys")).toBe(false);
-    expect(matchesFeedFilter(trade("S", 2_000_000), "whales")).toBe(true);
-    expect(matchesFeedFilter(trade("A", 2_000_000), "whales")).toBe(false);
-    expect(matchesFeedFilter(trade("P", 999_999), "whales")).toBe(false);
+    expect(matchesFeedFilter(trade(0, 0), "all")).toBe(true);
+    expect(matchesFeedFilter(trade(1, 50_000), "key")).toBe(true);
+    expect(matchesFeedFilter(trade(-1, 50_000), "key")).toBe(true);
+    expect(matchesFeedFilter(trade(1, 9_000), "key")).toBe(false); // under $10K
+    expect(matchesFeedFilter(trade(0, 5_000_000), "key")).toBe(false); // planned / tax / award
+    expect(matchesFeedFilter(trade(1, 10), "buys")).toBe(true);
+    expect(matchesFeedFilter(trade(-1, 10), "buys")).toBe(false);
+    expect(matchesFeedFilter(trade(-1, 10), "sells")).toBe(true);
+    expect(matchesFeedFilter(trade(-1, 2_000_000), "whales")).toBe(true);
+    expect(matchesFeedFilter(trade(0, 2_000_000), "whales")).toBe(false);
+    expect(matchesFeedFilter(trade(1, 999_999), "whales")).toBe(false);
   });
 });
 
@@ -50,10 +55,18 @@ it("rebuilds generated columns missing from realtime payloads", () => {
     shares: "10000",
     price_per_share: 300,
     is_direct: true,
-    post_transaction_shares: null,
+    post_transaction_shares: 40000,
+    is_10b5_1: false,
+    is_sell_to_cover: false,
+    parser_version: 2,
   });
   expect(row.total_value).toBe(3_000_000);
   expect(row.shares).toBe(10000);
+  expect(row.signal_direction).toBe(1);
+  expect(row.stake_change_pct).toBe(33.3);
+
+  const planned = normalizeRealtimeTransaction({ transaction_code: "S", shares: 1, price_per_share: 1, is_10b5_1: true, parser_version: 2 });
+  expect(planned.signal_direction).toBe(0);
 });
 
 describe("errors & retries", () => {

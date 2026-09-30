@@ -42,6 +42,7 @@ Deno.test("CFO sell-to-cover: the open-market sale outranks the exercise", () =>
     postTransactionShares: 25972.25,
     isPlanned: false,
     isSellToCover: true, // footnote: shares sold to cover tax withholding
+    isOptionSale: true, // the filing also exercises the options behind the sale
     lineCount: 1,
   });
 });
@@ -239,4 +240,32 @@ Deno.test("routine sales lose to a discretionary sale in the same filing", () =>
   );
   const s = summarizeForm4(parseForm4Xml(xml))!;
   assertEquals([s.shares, s.pricePerShare, s.isSellToCover, s.isPlanned], [100, 51, false, false]);
+});
+
+Deno.test("exercise-and-sell: selling about the shares just exercised is an option sale", () => {
+  const withExercise = (soldShares: number) =>
+    plannedXml("Weighted average price.").replace(
+      "<nonDerivativeTable>",
+      `<nonDerivativeTable>
+    <nonDerivativeTransaction>
+      <securityTitle><value>Common Stock</value></securityTitle>
+      <transactionDate><value>2026-09-01</value></transactionDate>
+      <transactionCoding><transactionCode>M</transactionCode></transactionCoding>
+      <transactionAmounts>
+        <transactionShares><value>1000</value></transactionShares>
+        <transactionPricePerShare><value>20</value></transactionPricePerShare>
+        <transactionAcquiredDisposedCode><value>A</value></transactionAcquiredDisposedCode>
+      </transactionAmounts>
+      <postTransactionAmounts><sharesOwnedFollowingTransaction><value>10000</value></sharesOwnedFollowingTransaction></postTransactionAmounts>
+      <ownershipNature><directOrIndirectOwnership><value>D</value></directOrIndirectOwnership></ownershipNature>
+    </nonDerivativeTransaction>`,
+    ).replace("<transactionShares><value>1000</value></transactionShares>\n        <transactionPricePerShare><value>50</value>",
+      `<transactionShares><value>${soldShares}</value></transactionShares>\n        <transactionPricePerShare><value>50</value>`);
+  const optionSale = summarizeForm4(parseForm4Xml(withExercise(1000)))!;
+  assertEquals([optionSale.transactionCode, optionSale.isOptionSale, optionSale.isPlanned], ["S", true, false]);
+  // Selling far more than was exercised also dumps existing shares: discretionary.
+  const bigSale = summarizeForm4(parseForm4Xml(withExercise(5000)))!;
+  assertEquals([bigSale.shares, bigSale.isOptionSale], [5000, false]);
+  // No exercise at all.
+  assertEquals(summarizeForm4(parseForm4Xml(plannedXml("Weighted average price.")))!.isOptionSale, false);
 });

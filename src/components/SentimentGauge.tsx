@@ -1,21 +1,29 @@
 /**
- * Semicircular 0–100 WISI gauge drawn with Skia: dimmed red (bearish ≤ 40),
- * grey (neutral) and green (bullish ≥ 60) bands, a value arc growing from the
- * neutral midpoint towards the score, and an animated needle.
+ * Semicircular 0–100 gauge drawn with Skia: dimmed red (≤ low), grey and green
+ * (≥ high) bands, a value arc growing from the neutral midpoint towards the
+ * score, and an animated needle. Used for the Insider Signal (42 / 58) and the
+ * spec WISI (40 / 60).
  */
 
 import { Canvas, Circle, Line, Path, Skia, vec } from "@shopify/react-native-skia";
 import { useEffect, useMemo } from "react";
 import { StyleSheet, View } from "react-native";
 import { Easing, useDerivedValue, useSharedValue, withTiming } from "react-native-reanimated";
-import { BEARISH_THRESHOLD, BULLISH_THRESHOLD, type SentimentLabel, sentimentColor } from "../lib/wisi";
+import { BEARISH_THRESHOLD, BULLISH_THRESHOLD } from "../lib/wisi";
 import { colors, fonts } from "../theme";
 import { AppText } from "./AppText";
 
 interface Props {
   index: number;
-  label: SentimentLabel;
+  label: string;
+  color: string;
+  /** Upper edge of the red band. */
+  low?: number;
+  /** Lower edge of the green band. */
+  high?: number;
   width?: number;
+  /** Screen-reader name, e.g. "Insider Signal". */
+  name?: string;
 }
 
 const STROKE = 14;
@@ -28,7 +36,15 @@ function arcPath(cx: number, cy: number, r: number, fromIndex: number, toIndex: 
     .detach();
 }
 
-export function SentimentGauge({ index, label, width = 260 }: Props) {
+export function SentimentGauge({
+  index,
+  label,
+  color,
+  low = BEARISH_THRESHOLD,
+  high = BULLISH_THRESHOLD,
+  width = 260,
+  name = "Insider sentiment",
+}: Props) {
   const height = width / 2 + STROKE;
   const cx = width / 2;
   const cy = width / 2;
@@ -39,11 +55,11 @@ export function SentimentGauge({ index, label, width = 260 }: Props) {
   const bands = useMemo(() => {
     const gap = 1.2;
     return [
-      { path: arcPath(cx, cy, r, 0, BEARISH_THRESHOLD - gap), color: colors.sell },
-      { path: arcPath(cx, cy, r, BEARISH_THRESHOLD + gap, BULLISH_THRESHOLD - gap), color: colors.neutral },
-      { path: arcPath(cx, cy, r, BULLISH_THRESHOLD + gap, 100), color: colors.buy },
+      { path: arcPath(cx, cy, r, 0, low - gap), color: colors.sell },
+      { path: arcPath(cx, cy, r, low + gap, high - gap), color: colors.neutral },
+      { path: arcPath(cx, cy, r, high + gap, 100), color: colors.buy },
     ];
-  }, [cx, cy, r]);
+  }, [cx, cy, r, low, high]);
 
   // Diverging from the neutral midpoint: bullish scores fill right, bearish left.
   const valueArc = useMemo(
@@ -61,13 +77,11 @@ export function SentimentGauge({ index, label, width = 260 }: Props) {
     return vec(cx + needleLength * Math.cos(angle), cy + needleLength * Math.sin(angle));
   });
 
-  const color = sentimentColor(label);
-
   return (
     <View
       style={{ width, alignItems: "center" }}
       accessibilityRole="image"
-      accessibilityLabel={`Insider sentiment ${clamped.toFixed(0)} out of 100, ${label}`}
+      accessibilityLabel={`${name} ${clamped.toFixed(0)} out of 100, ${label}`}
     >
       <Canvas style={{ width, height }}>
         {bands.map((band, i) => (

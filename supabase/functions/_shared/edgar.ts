@@ -276,7 +276,9 @@ export function prettifyCompanyName(name: string): string {
   if (letters.length === 0 || upper / letters.length < 0.7) return cleaned;
   return cleaned
     .toLowerCase()
-    .replace(/\b([a-z])([a-z]*)/g, (_m, first: string, rest: string) => first.toUpperCase() + rest)
+    // Capitalise words, but not a possessive "'s" (DICK'S → Dick's, O'REILLY → O'Reilly).
+    .replace(/(^|[^a-z'’])([a-z])/g, (_m, before: string, first: string) => before + first.toUpperCase())
+    .replace(/(['’])([a-z])([a-z]+)/g, (_m, mark: string, first: string, rest: string) => mark + first.toUpperCase() + rest)
     .replace(/\b(Llc|Lp|Plc|Nv|Sa|Ag|Se|Usa|Us|Ii|Iii|Iv)\b/g, (m) => m.toUpperCase());
 }
 

@@ -10,7 +10,7 @@ import { TickerSearchModal } from "../components/TickerSearchModal";
 import { useAddToWatchlist, useRemoveFromWatchlist, useWatchlist } from "../hooks/useWatchlist";
 import type { WatchlistItem } from "../lib/api";
 import { errorMessage } from "../lib/errors";
-import { normalizeLabel, sentimentColor } from "../lib/wisi";
+import { normalizeSignalLabel, signalColor, signalSummary } from "../lib/signal";
 import { colors, fonts, radius, spacing } from "../theme";
 
 const ACTION_WIDTH = 96;
@@ -39,8 +39,14 @@ function WatchlistRow({
   onRemove: () => void;
 }) {
   const company = item.company;
-  const score = company?.sentiment?.sentiment_index ?? 50;
-  const label = normalizeLabel(company?.sentiment?.sentiment_label, score);
+  const sentiment = company?.sentiment ?? null;
+  const score = Number(sentiment?.signal_score ?? 50);
+  const label = normalizeSignalLabel(
+    sentiment?.signal_label,
+    score,
+    (sentiment?.signal_buyers ?? 0) + (sentiment?.signal_sellers ?? 0),
+  );
+  const color = signalColor(label);
 
   return (
     <ReanimatedSwipeable
@@ -71,7 +77,7 @@ function WatchlistRow({
         delayLongPress={450}
         accessibilityRole="button"
         accessibilityHint="Swipe left or long-press to remove"
-        accessibilityLabel={`${company?.ticker}, ${company?.company_name}, sentiment ${score.toFixed(0)} ${label}`}
+        accessibilityLabel={`${company?.ticker}, ${company?.company_name}, Insider Signal ${score.toFixed(0)} ${label}`}
         accessibilityActions={[{ name: "delete", label: "Remove from watchlist" }]}
         onAccessibilityAction={(e) => e.nativeEvent.actionName === "delete" && onRemove()}
         testID={`watchlist-row-${company?.ticker}`}
@@ -84,11 +90,16 @@ function WatchlistRow({
             </AppText>
           </View>
           <View style={styles.rowRight}>
-            <AppText style={[styles.label, { color: sentimentColor(label) }]}>{label}</AppText>
+            <AppText style={[styles.label, { color }]}>{label}</AppText>
             <Ionicons name="chevron-forward" size={18} color={colors.textFaint} />
           </View>
         </View>
-        <SentimentBar index={score} label={label} />
+        <SentimentBar index={score} label={label} color={color} />
+        {sentiment ? (
+          <AppText variant="caption" numberOfLines={1}>
+            {signalSummary(sentiment)}
+          </AppText>
+        ) : null}
       </Pressable>
     </ReanimatedSwipeable>
   );

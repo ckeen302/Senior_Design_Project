@@ -8,31 +8,30 @@ import { Card } from "../components/Card";
 import { Disclaimer } from "../components/Disclaimer";
 import { LivePriceCard } from "../components/LivePriceCard";
 import { SegmentedControl } from "../components/SegmentedControl";
+import { SentimentBar } from "../components/SentimentBar";
 import { SentimentGauge } from "../components/SentimentGauge";
+import { SignalBreakdown } from "../components/SignalBreakdown";
 import { ErrorState, LoadingView } from "../components/StateViews";
 import { TradeCard } from "../components/TradeCard";
-import { useCompany, useCompanyRealtime, useCompanyTransactions, useInsiderActivity } from "../hooks/useCompany";
+import {
+  useCompany,
+  useCompanyRealtime,
+  useCompanyTransactions,
+  useInsiderActivity,
+  useSignalBreakdown,
+} from "../hooks/useCompany";
 import { useLivePrice } from "../hooks/useLivePrice";
 import { useNow } from "../hooks/useNow";
 import { useAddToWatchlist, useRemoveFromWatchlist, useWatchlistEntry } from "../hooks/useWatchlist";
+import type { TradeScope } from "../lib/api";
 import { errorMessage } from "../lib/errors";
-import { formatCompactCurrency, secFilingUrl, timeAgo } from "../lib/format";
-import { formatWisiBps, normalizeLabel, wisiToIndex } from "../lib/wisi";
+import { formatCompactCurrency, formatDay, secFilingUrl, timeAgo } from "../lib/format";
+import { normalizeSignalLabel, SIGNAL_THRESHOLDS, signalColor, signalSummary } from "../lib/signal";
+import { formatWisiBps, normalizeLabel, sentimentColor, wisiToIndex } from "../lib/wisi";
 import type { AppStackParamList } from "../navigation/types";
 import { colors, spacing } from "../theme";
 
 type Props = NativeStackScreenProps<AppStackParamList, "CompanyDetail">;
-
-function Stat({ label, value, color }: { label: string; value: string; color?: string }) {
-  return (
-    <View style={styles.stat}>
-      <AppText variant="label">{label}</AppText>
-      <AppText variant="bodyStrong" tabular color={color}>
-        {value}
-      </AppText>
-    </View>
-  );
-}
 
 export function CompanyDetailScreen({ route, navigation }: Props) {
   const { companyId, ticker: initialTicker } = route.params;
@@ -40,9 +39,11 @@ export function CompanyDetailScreen({ route, navigation }: Props) {
   const now = useNow();
   const [months, setMonths] = useState<"6" | "12">("12");
   const [metric, setMetric] = useState<ChartMetric>("value");
+  const [scope, setScope] = useState<TradeScope>("key");
 
   const company = useCompany(companyId);
-  const transactions = useCompanyTransactions(companyId);
+  const breakdown = useSignalBreakdown(companyId);
+  const transactions = useCompanyTransactions(companyId, scope);
   const activity = useInsiderActivity(companyId, Number(months));
   useCompanyRealtime(companyId);
 
@@ -77,10 +78,14 @@ export function CompanyDetailScreen({ route, navigation }: Props) {
 
   const detail = company.data;
   const sentiment = detail.sentiment;
-  const index = sentiment?.sentiment_index ?? wisiToIndex(sentiment?.wisi_score ?? 0);
-  const label = normalizeLabel(sentiment?.sentiment_label, index);
+  const insiders = (sentiment?.signal_buyers ?? 0) + (sentiment?.signal_sellers ?? 0);
+  const score = Number(sentiment?.signal_score ?? 50);
+  const label = normalizeSignalLabel(sentiment?.signal_label, score, insiders);
+  const wisiIndex = sentiment?.sentiment_index ?? wisiToIndex(sentiment?.wisi_score ?? 0);
+  const wisiLabel = normalizeLabel(sentiment?.sentiment_label, wisiIndex);
   const gaugeWidth = Math.min(width - spacing.lg * 4, 300);
-  const refreshing = company.isRefetching || transactions.isRefetching || activity.isRefetching;
+  const refreshing = company.isRefetching || transactions.isRefetching || activity.isRefetching ||
+    breakdown.isRefetching;
 
   return (
     <ScrollView
@@ -90,6 +95,7 @@ export function CompanyDetailScreen({ route, navigation }: Props) {
           refreshing={refreshing}
           onRefresh={() => {
             company.refetch();
+            breakdown.refetch();
             transactions.refetch();
             activity.refetch();
           }}
@@ -101,7 +107,9 @@ export function CompanyDetailScreen({ route, navigation }: Props) {
         <AppText variant="title">{detail.company_name}</AppText>
         <AppText variant="caption">
           {detail.ticker} · CIK {detail.cik}
-          {detail.market_cap ? ` · Market cap ${formatCompactCurrency(detail.market_cap)}` : ""}
+          {detail.market_cap && detail.market_cap_updated_at
+            ? ` · Market cap ${formatCompactCurrency(detail.market_cap)}`
+            : ""}
         </AppText>
       </View>
 
@@ -109,20 +117,40 @@ export function CompanyDetailScreen({ route, navigation }: Props) {
 
       <Card style={styles.section}>
         <View style={styles.sectionHeader}>
-          <AppText variant="heading">Insider sentiment (WISI)</AppText>
-          <AppText variant="caption">90-day window</AppText>
+          <AppText variant="heading">Insider Signal</AppText>
+          <AppText variant="caption">last 90 days</AppText>
         </View>
         <View style={styles.gaugeWrap}>
-          <SentimentGauge index={index} label={label} width={gaugeWidth} />
+          <SentimentGauge
+            index={score}
+            label={label}
+            color={signalColor(label)}
+            low={SIGNAL_THRESHOLDS.sell}
+            high={SIGNAL_THRESHOLDS.buy}
+            width={gaugeWidth}
+            name="Insider Signal"
+          />
         </View>
-        <View style={styles.statsRow}>
-          <Stat label="Buys" value={String(sentiment?.buy_count ?? 0)} color={colors.buy} />
-          <Stat label="Sells" value={String(sentiment?.sell_count ?? 0)} color={colors.sell} />
-          <Stat label="Net weighted" value={formatCompactCurrency(sentiment?.net_weighted_value ?? 0)} />
-        </View>
-        <AppText variant="caption">
-          WISI {formatWisiBps(sentiment?.wisi_score)} · updated {timeAgo(sentiment?.last_updated, now)}
+        <AppText variant="bodyStrong" style={styles.center}>
+          {sentiment ? signalSummary(sentiment) : "No insider trades yet"}
         </AppText>
+        {sentiment?.signal_last_trade_date ? (
+          <AppText variant="caption" style={styles.center}>
+            Latest counted trade {formatDay(sentiment.signal_last_trade_date)} · updated{" "}
+            {timeAgo(sentiment.last_updated, now)}
+          </AppText>
+        ) : null}
+      </Card>
+
+      <Card style={styles.section}>
+        <AppText variant="heading">Why this score</AppText>
+        {breakdown.isPending ? (
+          <LoadingView />
+        ) : breakdown.isError ? (
+          <ErrorState message={errorMessage(breakdown.error)} onRetry={() => breakdown.refetch()} />
+        ) : (
+          <SignalBreakdown rows={breakdown.data} sentiment={sentiment} price={price.price} />
+        )}
       </Card>
 
       <Card style={styles.section}>
@@ -159,13 +187,27 @@ export function CompanyDetailScreen({ route, navigation }: Props) {
       </Card>
 
       <View style={styles.section}>
-        <AppText variant="heading">Recent Form 4 filings</AppText>
+        <View style={styles.sectionHeader}>
+          <AppText variant="heading">Filings</AppText>
+          <SegmentedControl
+            options={[
+              { value: "key", label: "Buys & sells" },
+              { value: "all", label: "All" },
+            ]}
+            value={scope}
+            onChange={setScope}
+          />
+        </View>
         {transactions.isPending ? (
           <LoadingView />
         ) : transactions.isError ? (
           <ErrorState message={errorMessage(transactions.error)} onRetry={() => transactions.refetch()} />
         ) : transactions.data.length === 0 ? (
-          <AppText variant="caption">No filings ingested for {detail.ticker} yet.</AppText>
+          <AppText variant="caption">
+            {scope === "key"
+              ? `No open-market insider buys or sells for ${detail.ticker} yet. Switch to All to see awards and planned sales.`
+              : `No filings ingested for ${detail.ticker} yet.`}
+          </AppText>
         ) : (
           transactions.data.map((trade) => (
             <TradeCard
@@ -181,6 +223,21 @@ export function CompanyDetailScreen({ route, navigation }: Props) {
         ) : null}
       </View>
 
+      <Card style={styles.section}>
+        <View style={styles.sectionHeader}>
+          <AppText variant="bodyStrong">Classic WISI</AppText>
+          <AppText variant="caption" style={{ color: sentimentColor(wisiLabel) }}>
+            {wisiLabel}
+          </AppText>
+        </View>
+        <SentimentBar index={wisiIndex} label={wisiLabel} color={sentimentColor(wisiLabel)} />
+        <AppText variant="caption">
+          The original Weighted Insider Sentiment Index: every open-market buy (+) and sale (−), planned or not,
+          weighted by role and divided by market cap. {formatWisiBps(sentiment?.wisi_score)} ·{" "}
+          {sentiment?.buy_count ?? 0} buys · {sentiment?.sell_count ?? 0} sells.
+        </AppText>
+      </Card>
+
       <Disclaimer />
     </ScrollView>
   );
@@ -190,10 +247,9 @@ const styles = StyleSheet.create({
   content: { padding: spacing.lg, gap: spacing.lg, paddingBottom: spacing.xxl },
   titleBlock: { gap: 4 },
   section: { gap: spacing.md },
-  sectionHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "baseline" },
+  sectionHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", gap: spacing.sm },
   gaugeWrap: { alignItems: "center" },
-  statsRow: { flexDirection: "row", justifyContent: "space-between", gap: spacing.md },
-  stat: { gap: 2, flex: 1 },
+  center: { textAlign: "center" },
   controls: { flexDirection: "row", justifyContent: "space-between", flexWrap: "wrap", gap: spacing.sm },
   chartPlaceholder: { height: 220 },
 });

@@ -5,7 +5,7 @@ import type { FilingPointer } from "./edgar.ts";
 import {
   type CompanyRecord,
   type IngestRepository,
-  PARSER_VERSION,
+  MIN_REUSABLE_PARSER_VERSION,
   type SkippedFiling,
   type TransactionInsert,
 } from "./ingest.ts";
@@ -86,7 +86,7 @@ export class SupabaseIngestRepository implements IngestRepository, MarketReposit
           .from("insider_transactions")
           .select("accession_number")
           .in("accession_number", part)
-          .gte("parser_version", PARSER_VERSION),
+          .gte("parser_version", MIN_REUSABLE_PARSER_VERSION),
         "Loading stored accession numbers",
       ) as { accession_number: string }[];
       const skipped = check(

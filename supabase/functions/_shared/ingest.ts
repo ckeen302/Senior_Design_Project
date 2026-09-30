@@ -30,8 +30,14 @@ export interface CompanyRecord {
   last_synced_at: string | null;
 }
 
-/** Bumped whenever parsing changes; rows from older versions are re-processed. */
-export const PARSER_VERSION = 2;
+/** Version written with every row; bumped whenever parsing changes. */
+export const PARSER_VERSION = 3;
+/**
+ * Filings processed by this version or later are not downloaded again by the
+ * latest / backfill steps. Rows the newer parser would classify differently are
+ * upgraded by the reparse step (see reparse_candidates in SQL).
+ */
+export const MIN_REUSABLE_PARSER_VERSION = 2;
 
 export interface TransactionInsert {
   company_id: string;
@@ -48,6 +54,7 @@ export interface TransactionInsert {
   post_transaction_shares: number | null;
   is_10b5_1: boolean;
   is_sell_to_cover: boolean;
+  is_option_sale: boolean;
   parser_version: number;
 }
 
@@ -72,6 +79,7 @@ export function buildTransactionRow(
     post_transaction_shares: summary.postTransactionShares,
     is_10b5_1: summary.isPlanned,
     is_sell_to_cover: summary.isSellToCover,
+    is_option_sale: summary.isOptionSale,
     parser_version: PARSER_VERSION,
   };
 }
