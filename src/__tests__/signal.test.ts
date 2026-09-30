@@ -81,9 +81,16 @@ describe("plain-English trades", () => {
     expect([story.headline, story.tag, story.routine]).toEqual([headline, tag, routine]);
   });
 
+  it("gives list rows a short action phrase", () => {
+    expect(describeTrade({ ...base, transaction_code: "S", is_sell_to_cover: true }).action).toBe("Sold to cover taxes");
+    expect(describeTrade({ ...base, transaction_code: "C", total_value: 0 }).action).toBe("Converted");
+    expect(describeTrade({ ...base, transaction_code: "P" }).action).toBe("Bought");
+  });
+
   it("describes how much of the stake changed", () => {
     expect(describeTrade({ ...base, transaction_code: "S" }).stakeNote).toBe("Sold 9% of stake");
-    expect(describeTrade({ ...base, transaction_code: "P", stake_change_pct: 0.4 }).stakeNote).toBe("+<1% stake");
+    expect(describeTrade({ ...base, transaction_code: "P", stake_change_pct: 0.4 }).stakeNote).toBe("+0.4% stake");
+    expect(describeTrade({ ...base, transaction_code: "P", stake_change_pct: 0.04 }).stakeNote).toBe("+<0.1% stake");
     expect(describeTrade({ ...base, transaction_code: "A" }).stakeNote).toBeNull();
     expect(describeTrade({ ...base, transaction_code: "S", is_option_sale: true }).stakeNote).toBeNull();
   });

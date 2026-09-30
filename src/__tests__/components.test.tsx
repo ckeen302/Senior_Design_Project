@@ -31,15 +31,13 @@ const acme = { id: "c1", ticker: "ACME", company_name: "Acme Corp", cik: "000000
 const NOW = Date.parse("2026-09-28T12:00:00Z");
 
 describe("TradeCard", () => {
-  it("tells the trade in plain English: who, what, how much, stake change, when", async () => {
+  it("reads as one clean row: ticker, what happened, who, when, and the amount as a pill", async () => {
     await render(<TradeCard trade={trade} company={acme} now={NOW} relatedFilers={1} />);
-    expect(screen.getByText("ACME")).toBeTruthy();
-    expect(screen.getByText("Bought $1.3M")).toBeTruthy();
-    expect(screen.getByText("Doe Jane · CEO")).toBeTruthy();
-    expect(screen.getByText("10,000 sh @ $125.00 · +25% stake")).toBeTruthy();
-    expect(screen.getByText("Open-market buy")).toBeTruthy();
-    expect(screen.getByText("+1 related filer")).toBeTruthy();
-    expect(screen.getByText("3h ago")).toBeTruthy();
+    expect(screen.getByText(/^ACME/)).toBeTruthy();
+    expect(screen.getByText("Bought · Doe Jane · CEO")).toBeTruthy();
+    expect(screen.getByText("3h ago · +25% stake · +1 related filer")).toBeTruthy();
+    expect(screen.getByText("+$1.3M")).toBeTruthy();
+    expect(screen.getByLabelText(/Open-market buy/)).toBeTruthy();
   });
 
   it("marks pre-planned and tax sales as routine", async () => {
@@ -50,8 +48,9 @@ describe("TradeCard", () => {
         now={NOW}
       />,
     );
-    expect(screen.getByText("Sold $1.3M")).toBeTruthy();
-    expect(screen.getByText("10b5-1 plan · routine")).toBeTruthy();
+    expect(screen.getByText("Sold under a 10b5-1 plan · Doe Jane · CEO")).toBeTruthy();
+    expect(screen.getByText("$1.3M")).toBeTruthy();
+    expect(screen.getByLabelText(/10b5-1 plan, routine/)).toBeTruthy();
   });
 
   it("never repeats an implausible dollar amount", async () => {
@@ -62,9 +61,16 @@ describe("TradeCard", () => {
         now={NOW}
       />,
     );
-    expect(screen.getByText("Bought 40,000,000 shares")).toBeTruthy();
-    expect(screen.getByText("Price looks wrong in filing · routine")).toBeTruthy();
+    expect(screen.getByText("Price looks wrong in filing · Doe Jane · CEO")).toBeTruthy();
+    expect(screen.getByText("40.0M sh")).toBeTruthy();
     expect(screen.queryByText(/\$1\.6/)).toBeNull();
+  });
+
+  it("on a company page, leads with the insider and the trade details", async () => {
+    await render(<TradeCard trade={trade} now={NOW} />);
+    expect(screen.getByText(/^Doe Jane/)).toBeTruthy();
+    expect(screen.getByText("Bought · Sep 26, 2026")).toBeTruthy();
+    expect(screen.getByText("10,000 sh @ $125.00 · +25% stake · filed 3h ago")).toBeTruthy();
   });
 });
 

@@ -15,7 +15,7 @@ export function AppStack() {
       screenOptions={{
         headerStyle: { backgroundColor: colors.background },
         headerTintColor: colors.text,
-        headerTitleStyle: { fontFamily: fonts.semibold, color: colors.text },
+        headerTitleStyle: { fontFamily: fonts.semibold, fontSize: 16, color: colors.text },
         headerShadowVisible: false,
         contentStyle: { backgroundColor: colors.background },
       }}
@@ -24,7 +24,7 @@ export function AppStack() {
       <Stack.Screen
         name="CompanyDetail"
         component={CompanyDetailScreen}
-        options={({ route }) => ({ title: route.params.ticker ?? "Company", headerBackTitle: "Back" })}
+        options={({ route }) => ({ title: route.params.ticker ?? "", headerBackButtonDisplayMode: "minimal" })}
       />
     </Stack.Navigator>
   );

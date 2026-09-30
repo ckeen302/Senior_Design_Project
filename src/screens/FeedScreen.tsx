@@ -1,5 +1,5 @@
 import { useNavigation } from "@react-navigation/native";
-import { useCallback, useLayoutEffect, useState } from "react";
+import { useCallback, useState } from "react";
 import { ActivityIndicator, FlatList, RefreshControl, StyleSheet, View } from "react-native";
 import { AppText } from "../components/AppText";
 import { BiggestBuys } from "../components/BiggestBuys";
@@ -7,11 +7,12 @@ import { SegmentedControl } from "../components/SegmentedControl";
 import { EmptyState, ErrorState, LoadingView } from "../components/StateViews";
 import { StatusPill } from "../components/StatusPill";
 import { TradeCard } from "../components/TradeCard";
+import { Divider, ScreenHeader, SectionHeader } from "../components/ui";
 import { type RealtimeStatus, useInsiderFeed, useRealtimeFeed } from "../hooks/useInsiderFeed";
 import { useNow } from "../hooks/useNow";
 import type { BigBuy, FeedFilter, FeedItem } from "../lib/api";
 import { errorMessage } from "../lib/errors";
-import { colors, spacing } from "../theme";
+import { colors, gutter, spacing } from "../theme";
 
 const FILTERS: { value: FeedFilter; label: string }[] = [
   { value: "key", label: "Key trades" },
@@ -50,17 +51,6 @@ export function FeedScreen() {
   const { status, freshIds } = useRealtimeFeed();
   const now = useNow();
 
-  useLayoutEffect(() => {
-    const copy = liveCopy[status];
-    navigation.setOptions({
-      headerRight: () => (
-        <View style={styles.headerRight}>
-          <StatusPill label={copy.label} tone={copy.tone} />
-        </View>
-      ),
-    });
-  }, [navigation, status]);
-
   const openCompany = useCallback(
     (item: FeedItem | BigBuy) => {
       if (item.company) navigation.navigate("CompanyDetail", { companyId: item.company.id, ticker: item.company.ticker });
@@ -86,17 +76,35 @@ export function FeedScreen() {
     if (feed.hasNextPage && !feed.isFetchingNextPage && !feed.isError) feed.fetchNextPage();
   };
 
+  const live = liveCopy[status];
+
   return (
     <FlatList
+      style={styles.list}
       data={feed.items}
       keyExtractor={(item) => item.id}
       renderItem={renderItem}
+      ItemSeparatorComponent={RowDivider}
       contentContainerStyle={styles.content}
       ListHeaderComponent={
-        <View style={styles.header}>
+        <View>
+          <ScreenHeader title="Insider Feed" right={<StatusPill label={live.label} tone={live.tone} />} />
           <BiggestBuys now={now} onOpen={openCompany} />
-          <SegmentedControl scrollable options={FILTERS} value={filter} onChange={setFilter} />
-          <AppText variant="caption">{FILTER_NOTES[filter]}</AppText>
+          <SectionHeader title="Latest filings" style={styles.latest} />
+          <View style={styles.filters}>
+            <SegmentedControl
+              variant="tabs"
+              scrollable
+              inset={gutter}
+              options={FILTERS}
+              value={filter}
+              onChange={setFilter}
+            />
+          </View>
+          <AppText variant="caption" style={styles.note}>
+            {FILTER_NOTES[filter]}
+          </AppText>
+          <Divider />
         </View>
       }
       onEndReached={loadMore}
@@ -126,17 +134,23 @@ export function FeedScreen() {
           <EmptyState icon="document-text-outline" title="Nothing here yet" message={EMPTY_COPY[filter]} />
         )
       }
-      initialNumToRender={8}
+      initialNumToRender={10}
       windowSize={9}
       removeClippedSubviews
     />
   );
 }
 
+function RowDivider() {
+  return <Divider inset={gutter + 40 + spacing.md} />;
+}
+
 const styles = StyleSheet.create({
-  content: { padding: spacing.lg, gap: spacing.md, flexGrow: 1 },
-  header: { gap: spacing.md, marginBottom: spacing.xs },
-  headerRight: { marginRight: spacing.lg },
+  list: { backgroundColor: colors.background },
+  content: { flexGrow: 1, paddingBottom: spacing.xxl },
+  latest: { marginTop: spacing.xl },
+  filters: { marginTop: spacing.xs },
+  note: { paddingHorizontal: gutter, marginTop: spacing.md, marginBottom: spacing.md },
   footer: { marginVertical: spacing.lg },
-  end: { textAlign: "center", marginVertical: spacing.lg },
+  end: { textAlign: "center", marginVertical: spacing.xl },
 });

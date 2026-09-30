@@ -1,8 +1,8 @@
 /**
- * Semicircular 0–100 gauge drawn with Skia: dimmed red (≤ low), grey and green
- * (≥ high) bands, a value arc growing from the neutral midpoint towards the
- * score, and an animated needle. Used for the Insider Signal (42 / 58) and the
- * spec WISI (40 / 60).
+ * Minimal 0–100 gauge drawn with Skia: a thin track, a value arc that grows
+ * from the neutral midpoint towards the score, faint ticks at the two label
+ * thresholds, and a knob at the value. Used for the Insider Signal (42 / 58)
+ * and the spec WISI (40 / 60).
  */
 
 import { Canvas, Circle, Line, Path, Skia, vec } from "@shopify/react-native-skia";
@@ -17,23 +17,28 @@ interface Props {
   index: number;
   label: string;
   color: string;
-  /** Upper edge of the red band. */
+  /** Upper edge of the "selling" zone. */
   low?: number;
-  /** Lower edge of the green band. */
+  /** Lower edge of the "buying" zone. */
   high?: number;
   width?: number;
   /** Screen-reader name, e.g. "Insider Signal". */
   name?: string;
 }
 
-const STROKE = 14;
+const STROKE = 10;
+const angleOf = (value: number) => 180 + (value / 100) * 180;
 
-function arcPath(cx: number, cy: number, r: number, fromIndex: number, toIndex: number) {
-  const start = 180 + (fromIndex / 100) * 180;
-  const sweep = ((toIndex - fromIndex) / 100) * 180;
+/** Arc from one gauge value to another (the sweep may be negative). */
+function arcPath(cx: number, cy: number, r: number, from: number, to: number) {
   return Skia.PathBuilder.Make()
-    .addArc({ x: cx - r, y: cy - r, width: r * 2, height: r * 2 }, start, sweep)
+    .addArc({ x: cx - r, y: cy - r, width: r * 2, height: r * 2 }, angleOf(from), ((to - from) / 100) * 180)
     .detach();
+}
+
+function pointAt(cx: number, cy: number, r: number, value: number) {
+  const a = (angleOf(value) * Math.PI) / 180;
+  return vec(cx + r * Math.cos(a), cy + r * Math.sin(a));
 }
 
 export function SentimentGauge({
@@ -45,36 +50,39 @@ export function SentimentGauge({
   width = 260,
   name = "Insider sentiment",
 }: Props) {
-  const height = width / 2 + STROKE;
+  const r = width / 2 - STROKE;
   const cx = width / 2;
   const cy = width / 2;
-  const r = width / 2 - STROKE;
-  const needleLength = r - STROKE * 1.4;
+  const height = cy + STROKE;
   const clamped = Math.max(0, Math.min(100, index));
 
-  const bands = useMemo(() => {
-    const gap = 1.2;
-    return [
-      { path: arcPath(cx, cy, r, 0, low - gap), color: colors.sell },
-      { path: arcPath(cx, cy, r, low + gap, high - gap), color: colors.neutral },
-      { path: arcPath(cx, cy, r, high + gap, 100), color: colors.buy },
-    ];
-  }, [cx, cy, r, low, high]);
-
-  // Diverging from the neutral midpoint: bullish scores fill right, bearish left.
+  const track = useMemo(() => arcPath(cx, cy, r, 0, 100), [cx, cy, r]);
   const valueArc = useMemo(
-    () => (Math.abs(clamped - 50) >= 0.5 ? arcPath(cx, cy, r, Math.min(50, clamped), Math.max(50, clamped)) : null),
+    () => (Math.abs(clamped - 50) >= 0.5 ? arcPath(cx, cy, r, 50, clamped) : null),
     [cx, cy, r, clamped],
   );
+  const ticks = useMemo(
+    () =>
+      [low, high].map((t) => ({
+        from: pointAt(cx, cy, r - STROKE / 2 - 4, t),
+        to: pointAt(cx, cy, r + STROKE / 2 + 4, t),
+      })),
+    [cx, cy, r, low, high],
+  );
 
-  const progress = useSharedValue(50);
+  const progress = useSharedValue(0);
   useEffect(() => {
-    progress.value = withTiming(clamped, { duration: 900, easing: Easing.out(Easing.cubic) });
+    progress.value = 0;
+    progress.value = withTiming(1, { duration: 900, easing: Easing.out(Easing.cubic) });
   }, [clamped, progress]);
 
-  const needleEnd = useDerivedValue(() => {
-    const angle = ((180 + progress.value * 1.8) * Math.PI) / 180;
-    return vec(cx + needleLength * Math.cos(angle), cy + needleLength * Math.sin(angle));
+  const knobX = useDerivedValue(() => {
+    const a = ((180 + (50 + (clamped - 50) * progress.value) * 1.8) * Math.PI) / 180;
+    return cx + r * Math.cos(a);
+  });
+  const knobY = useDerivedValue(() => {
+    const a = ((180 + (50 + (clamped - 50) * progress.value) * 1.8) * Math.PI) / 180;
+    return cy + r * Math.sin(a);
   });
 
   return (
@@ -84,33 +92,35 @@ export function SentimentGauge({
       accessibilityLabel={`${name} ${clamped.toFixed(0)} out of 100, ${label}`}
     >
       <Canvas style={{ width, height }}>
-        {bands.map((band, i) => (
-          <Path key={i} path={band.path} style="stroke" strokeWidth={STROKE} color={band.color} opacity={0.3} strokeCap="butt" />
+        <Path path={track} style="stroke" strokeWidth={STROKE} color={colors.surfaceRaised} strokeCap="round" />
+        {ticks.map((t, i) => (
+          <Line key={i} p1={t.from} p2={t.to} color={colors.textFaint} strokeWidth={1.5} strokeCap="round" />
         ))}
         {valueArc ? (
-          <Path path={valueArc} style="stroke" strokeWidth={STROKE} color={color} strokeCap="butt" />
+          <Path path={valueArc} style="stroke" strokeWidth={STROKE} color={color} strokeCap="round" end={progress} />
         ) : null}
-        <Line p1={vec(cx, cy)} p2={needleEnd} color={colors.text} strokeWidth={3} strokeCap="round" />
-        <Circle cx={cx} cy={cy} r={8} color={colors.text} />
-        <Circle cx={cx} cy={cy} r={4} color={colors.background} />
+        <Circle cx={knobX} cy={knobY} r={STROKE / 2 + 5} color={colors.background} />
+        <Circle cx={knobX} cy={knobY} r={STROKE / 2 + 2} color={color} />
       </Canvas>
-      <View style={[styles.scale, { width: width - STROKE }]}>
-        <AppText variant="caption">0</AppText>
-        <AppText variant="caption">100</AppText>
-      </View>
-      <View style={styles.readout}>
-        <AppText style={styles.value} tabular>
-          {clamped.toFixed(0)}
-        </AppText>
+      <View style={[styles.readout, { top: height - 64 }]} pointerEvents="none">
+        <AppText style={styles.value}>{clamped.toFixed(0)}</AppText>
         <AppText style={[styles.label, { color }]}>{label}</AppText>
+      </View>
+      <View style={[styles.scale, { width: width - STROKE }]}>
+        <AppText variant="micro" color={colors.textFaint}>
+          0
+        </AppText>
+        <AppText variant="micro" color={colors.textFaint}>
+          100
+        </AppText>
       </View>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  readout: { alignItems: "center", marginTop: -8 },
-  value: { fontFamily: fonts.bold, fontSize: 34, lineHeight: 38, color: colors.text },
-  label: { fontFamily: fonts.semibold, fontSize: 14, letterSpacing: 0.8, textTransform: "uppercase" },
-  scale: { flexDirection: "row", justifyContent: "space-between", marginTop: -6 },
+  readout: { position: "absolute", left: 0, right: 0, alignItems: "center" },
+  value: { fontFamily: fonts.bold, fontSize: 44, lineHeight: 48, color: colors.text, letterSpacing: -1.4 },
+  label: { fontFamily: fonts.semibold, fontSize: 14, letterSpacing: 0.2 },
+  scale: { flexDirection: "row", justifyContent: "space-between", marginTop: 2 },
 });

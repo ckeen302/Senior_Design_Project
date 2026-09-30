@@ -8,7 +8,7 @@ import { Button } from "./Button";
 export function LoadingView({ label }: { label?: string }) {
   return (
     <View style={styles.center} accessibilityRole="progressbar" accessibilityLabel={label ?? "Loading"}>
-      <ActivityIndicator color={colors.primary} size="large" />
+      <ActivityIndicator color={colors.textMuted} />
       {label ? <AppText variant="caption">{label}</AppText> : null}
     </View>
   );
@@ -29,10 +29,8 @@ export function EmptyState({
 }) {
   return (
     <View style={styles.center}>
-      <View style={styles.iconWrap}>
-        <Ionicons name={icon} size={28} color={colors.textMuted} />
-      </View>
-      <AppText variant="heading" style={styles.centerText}>
+      <Ionicons name={icon} size={32} color={colors.textFaint} />
+      <AppText variant="subheading" style={styles.centerText}>
         {title}
       </AppText>
       <AppText variant="caption" style={[styles.centerText, styles.message]}>
@@ -56,16 +54,8 @@ export function ErrorState({ message, onRetry }: { message: string; onRetry?: ()
 }
 
 const styles = StyleSheet.create({
-  center: { flex: 1, alignItems: "center", justifyContent: "center", padding: spacing.xl, gap: spacing.md },
-  iconWrap: {
-    width: 56,
-    height: 56,
-    borderRadius: 28,
-    backgroundColor: colors.surfaceRaised,
-    alignItems: "center",
-    justifyContent: "center",
-  },
+  center: { flex: 1, alignItems: "center", justifyContent: "center", padding: spacing.xl, gap: spacing.sm },
   centerText: { textAlign: "center" },
   message: { maxWidth: 300 },
-  action: { marginTop: spacing.sm, alignSelf: "stretch", maxWidth: 280, width: "100%" },
+  action: { marginTop: spacing.md, alignSelf: "stretch", maxWidth: 280, width: "100%" },
 });

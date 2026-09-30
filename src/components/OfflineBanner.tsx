@@ -1,4 +1,7 @@
-/** Small, non-blocking banner shown while the device has no connection. */
+/**
+ * Small, non-blocking pill shown while the device has no connection. It floats
+ * above the tab bar so it never covers a screen's large title.
+ */
 
 import { Ionicons } from "@expo/vector-icons";
 import { useEffect, useRef, useState } from "react";
@@ -7,6 +10,9 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useNetworkStatus } from "../hooks/useNetworkStatus";
 import { colors, fonts, radius } from "../theme";
 import { AppText } from "./AppText";
+
+/** Default bottom tab bar height (49) plus a little air. */
+const TAB_BAR_CLEARANCE = 49 + 12;
 
 export function OfflineBanner() {
   const { isOnline, isKnown } = useNetworkStatus();
@@ -41,14 +47,14 @@ export function OfflineBanner() {
       style={[
         styles.wrap,
         {
-          top: insets.top + 6,
+          bottom: insets.bottom + TAB_BAR_CLEARANCE,
           opacity: anim,
-          transform: [{ translateY: anim.interpolate({ inputRange: [0, 1], outputRange: [-40, 0] }) }],
+          transform: [{ translateY: anim.interpolate({ inputRange: [0, 1], outputRange: [24, 0] }) }],
         },
       ]}
     >
       <Animated.View style={[styles.pill, { backgroundColor: offline ? colors.warning : colors.buy }]}>
-        <Ionicons name={offline ? "cloud-offline" : "cloud-done"} size={14} color="#0A0E13" />
+        <Ionicons name={offline ? "cloud-offline" : "cloud-done"} size={14} color={colors.onPrimary} />
         <AppText style={styles.text}>{offline ? "Offline — showing saved data" : "Back online"}</AppText>
       </Animated.View>
     </Animated.View>
@@ -65,5 +71,5 @@ const styles = StyleSheet.create({
     paddingVertical: 6,
     borderRadius: radius.pill,
   },
-  text: { fontFamily: fonts.semibold, fontSize: 12.5, color: "#0A0E13" },
+  text: { fontFamily: fonts.semibold, fontSize: 12.5, color: colors.onPrimary },
 });

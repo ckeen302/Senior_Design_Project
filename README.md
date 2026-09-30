@@ -272,6 +272,10 @@ CI (`.github/workflows/ci.yml`) runs all three on every pull request.
 * **Navigation.** The spec's "App Stack (Bottom Tab Navigator)" is a native stack wrapping the
   tabs so Company Detail (which needs a ticker) can be pushed from any tab. React Navigation 7 is
   used (the current release; same API as v6).
+* **Visual design.** True black with one accent, in the style of Robinhood: mint `#21CE99` for
+  buying and actions, orange-red `#F45531` for selling (Robinhood's original pair, which stays
+  distinguishable for red–green colour-blind readers). Direction is never shown by colour alone —
+  values carry a sign and rows say "Bought" / "Sold". Inter throughout, with tabular figures for numbers.
 * **Offline & resilience.** Queries run `offlineFirst`, retry network/408/429/5xx errors with
   exponential backoff, pause while offline and refetch on reconnect. Finnhub rate limits or missing
   quotes show a status instead of failing; the price socket reconnects with backoff. Realtime rows

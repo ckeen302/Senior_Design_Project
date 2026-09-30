@@ -1,17 +1,19 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import Constants from "expo-constants";
-import { useEffect, useState } from "react";
-import { Linking, ScrollView, StyleSheet, Switch, View } from "react-native";
+import { Children, type ReactNode, useEffect, useState } from "react";
+import { ActivityIndicator, Linking, Platform, Pressable, ScrollView, StyleSheet, Switch, View } from "react-native";
 import { AppText } from "../components/AppText";
-import { Button } from "../components/Button";
-import { Card } from "../components/Card";
 import { Disclaimer } from "../components/Disclaimer";
+import { Divider, ScreenHeader } from "../components/ui";
 import { fetchProfile, type Profile, queryKeys, updateProfile } from "../lib/api";
 import { errorMessage } from "../lib/errors";
 import { getPushPermission, type PushPermission, syncPushToken } from "../lib/notifications";
 import { clearQueryCache } from "../lib/queryClient";
 import { useAuthStore } from "../store/authStore";
-import { colors, spacing } from "../theme";
+import { colors, gutter, radius, spacing } from "../theme";
+
+/** react-native-web paints the "on" thumb teal unless told otherwise. */
+const WEB_SWITCH = Platform.OS === "web" ? ({ activeThumbColor: "#FFFFFF" } as object) : {};
 
 const permissionCopy: Record<PushPermission, string> = {
   granted: "Enabled on this device",
@@ -20,15 +22,60 @@ const permissionCopy: Record<PushPermission, string> = {
   unsupported: "Not available on this device",
 };
 
-function Row({ title, subtitle, right }: { title: string; subtitle?: string; right?: React.ReactNode }) {
+function Group({ title, children }: { title: string; children: ReactNode }) {
+  const items = Children.toArray(children).filter(Boolean);
   return (
-    <View style={styles.row}>
+    <View style={styles.group}>
+      <AppText variant="label" style={styles.groupTitle}>
+        {title}
+      </AppText>
+      <View style={styles.groupBody}>
+        {items.map((child, i) => (
+          <View key={i}>
+            {i > 0 ? <Divider inset={spacing.lg} /> : null}
+            {child}
+          </View>
+        ))}
+      </View>
+    </View>
+  );
+}
+
+function Row({
+  title,
+  subtitle,
+  right,
+  onPress,
+  tone,
+  loading,
+  testID,
+}: {
+  title: string;
+  subtitle?: string;
+  right?: ReactNode;
+  onPress?: () => void;
+  tone?: "danger" | "action";
+  loading?: boolean;
+  testID?: string;
+}) {
+  const color = tone === "danger" ? colors.sell : tone === "action" ? colors.primary : colors.text;
+  return (
+    <Pressable
+      onPress={onPress}
+      disabled={!onPress || loading}
+      style={({ pressed }) => [styles.row, pressed && onPress ? styles.rowPressed : null]}
+      accessibilityRole={onPress ? "button" : undefined}
+      accessibilityLabel={onPress ? title : undefined}
+      testID={testID}
+    >
       <View style={styles.rowText}>
-        <AppText variant="bodyStrong">{title}</AppText>
+        <AppText variant="bodyStrong" color={color}>
+          {title}
+        </AppText>
         {subtitle ? <AppText variant="caption">{subtitle}</AppText> : null}
       </View>
-      {right}
-    </View>
+      {loading ? <ActivityIndicator color={colors.textMuted} /> : right}
+    </Pressable>
   );
 }
 
@@ -107,15 +154,15 @@ export function SettingsScreen() {
   const deviceRegistered = !!profile.data?.expo_push_token && permission === "granted";
 
   return (
-    <ScrollView contentContainerStyle={styles.content}>
-      <Card style={styles.card}>
-        <AppText variant="label">Account</AppText>
-        <Row title={user?.email ?? "Signed in"} subtitle="Signed in with email and password" />
-        <Button title="Sign out" variant="danger" icon="log-out-outline" onPress={handleSignOut} loading={signingOut} testID="settings-sign-out" />
-      </Card>
+    <ScrollView style={styles.screen} contentContainerStyle={styles.content}>
+      <ScreenHeader title="Settings" />
 
-      <Card style={styles.card}>
-        <AppText variant="label">Notifications</AppText>
+      <Group title="Account">
+        <Row title={user?.email ?? "Signed in"} subtitle="Signed in with email and password" />
+        <Row title="Sign out" tone="danger" onPress={handleSignOut} loading={signingOut} testID="settings-sign-out" />
+      </Group>
+
+      <Group title="Notifications">
         <Row
           title="Whale alerts"
           subtitle="Instant alerts when a CEO or CFO buys $1M+ of their own stock on the open market."
@@ -124,7 +171,10 @@ export function SettingsScreen() {
               value={alertsEnabled}
               onValueChange={(v) => toggleAlerts.mutate(v)}
               disabled={!profile.data || toggleAlerts.isPending}
-              trackColor={{ true: colors.buy, false: colors.border }}
+              trackColor={{ true: colors.primary, false: colors.surfaceRaised }}
+              thumbColor="#FFFFFF"
+              ios_backgroundColor={colors.surfaceRaised}
+              {...WEB_SWITCH}
               accessibilityLabel="Whale alerts"
             />
           }
@@ -141,51 +191,63 @@ export function SettingsScreen() {
         />
         {permission !== "granted" || !deviceRegistered ? (
           permission === "denied" ? (
-            <Button title="Open system settings" variant="secondary" icon="settings-outline" onPress={() => Linking.openSettings()} />
+            <Row title="Open system settings" tone="action" onPress={() => Linking.openSettings()} />
           ) : permission !== "unsupported" ? (
-            <Button
-              title="Enable push notifications"
-              variant="secondary"
-              icon="notifications-outline"
-              onPress={enablePush}
-              loading={registering}
-            />
+            <Row title="Enable push notifications" tone="action" onPress={enablePush} loading={registering} />
           ) : null
         ) : null}
-        {pushMessage ? <AppText variant="caption">{pushMessage}</AppText> : null}
-      </Card>
+      </Group>
+      {pushMessage ? (
+        <AppText variant="caption" style={styles.note}>
+          {pushMessage}
+        </AppText>
+      ) : null}
 
-      <Card style={styles.card}>
-        <AppText variant="label">Offline data</AppText>
+      <Group title="Offline data">
         <Row
-          title="Cached filings & scores"
-          subtitle="Recently viewed feeds, companies and sentiment scores are saved on this device so they load instantly and work offline."
+          title="Clear offline cache"
+          tone="action"
+          subtitle="Recently viewed feeds, companies and scores are saved on this device so they load instantly and work offline."
+          onPress={clearCache}
         />
-        <Button title="Clear offline cache" variant="secondary" icon="trash-outline" onPress={clearCache} />
-        {cacheMessage ? <AppText variant="caption">{cacheMessage}</AppText> : null}
-      </Card>
+      </Group>
+      {cacheMessage ? (
+        <AppText variant="caption" style={styles.note}>
+          {cacheMessage}
+        </AppText>
+      ) : null}
 
-      <Card style={styles.card}>
-        <AppText variant="label">About</AppText>
+      <Group title="About">
         <Row
           title="Data sources"
-          subtitle="Insider transactions: SEC EDGAR Form 4 filings (data.sec.gov). Prices: Finnhub. Filings are synced every 15 minutes."
+          subtitle="Insider trades: SEC EDGAR Form 4 filings for the whole US market, synced every 2 minutes. Prices and market caps: Finnhub."
         />
         <Row
-          title="How WISI works"
-          subtitle="Σ (shares × price × role weight × direction) ÷ market cap over 90 days. Role weights: CEO/CFO 1.5, director 1.0, officer or 10% owner 0.7, other 0.5. Buys count +1, sells −1, awards and other codes 0."
+          title="How the scores work"
+          subtitle="Insider Signal: every stock starts at 50; open-market buys add points and discretionary sales subtract them, weighted by role, size, recency and stake change (open any stock's “Why this score”). Classic WISI: Σ shares × price × role weight × direction ÷ market cap over 90 days."
         />
-        <Row title="Version" subtitle={Constants.expoConfig?.version ?? "1.0.0"} />
-      </Card>
+        <Row
+          title="Version"
+          right={<AppText variant="body" color={colors.textMuted}>{Constants.expoConfig?.version ?? "1.0.0"}</AppText>}
+        />
+      </Group>
 
-      <Disclaimer />
+      <View style={styles.disclaimer}>
+        <Disclaimer />
+      </View>
     </ScrollView>
   );
 }
 
 const styles = StyleSheet.create({
-  content: { padding: spacing.lg, gap: spacing.lg, paddingBottom: spacing.xxl },
-  card: { gap: spacing.md },
-  row: { flexDirection: "row", alignItems: "center", gap: spacing.md },
+  screen: { backgroundColor: colors.background },
+  content: { paddingBottom: spacing.xxl },
+  group: { marginBottom: spacing.xl },
+  groupTitle: { paddingHorizontal: gutter + 4, marginBottom: spacing.sm },
+  groupBody: { marginHorizontal: gutter, backgroundColor: colors.surface, borderRadius: radius.lg, overflow: "hidden" },
+  row: { flexDirection: "row", alignItems: "center", gap: spacing.md, paddingHorizontal: spacing.lg, paddingVertical: 14 },
+  rowPressed: { backgroundColor: colors.surfaceRaised },
   rowText: { flex: 1, gap: 2 },
+  note: { paddingHorizontal: gutter + 4, marginTop: -spacing.md, marginBottom: spacing.lg },
+  disclaimer: { paddingHorizontal: gutter + 4 },
 });

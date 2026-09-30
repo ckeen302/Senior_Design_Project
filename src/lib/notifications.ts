@@ -60,7 +60,7 @@ async function ensureAndroidChannel() {
     description: "Large CEO / CFO open-market purchases",
     importance: Notifications.AndroidImportance.HIGH,
     vibrationPattern: [0, 250, 150, 250],
-    lightColor: "#22C55E",
+    lightColor: "#21CE99",
   });
 }
 

@@ -18,13 +18,14 @@ export interface ButtonProps {
   accessibilityHint?: string;
 }
 
-const palette: Record<Variant, { bg: string; fg: string; border: string }> = {
-  primary: { bg: colors.primary, fg: "#FFFFFF", border: colors.primary },
-  secondary: { bg: colors.surfaceRaised, fg: colors.text, border: colors.border },
-  ghost: { bg: "transparent", fg: colors.primary, border: "transparent" },
-  danger: { bg: colors.sellMuted, fg: colors.sell, border: "transparent" },
+const palette: Record<Variant, { bg: string; fg: string }> = {
+  primary: { bg: colors.primary, fg: colors.onPrimary },
+  secondary: { bg: colors.surfaceRaised, fg: colors.text },
+  ghost: { bg: "transparent", fg: colors.primary },
+  danger: { bg: colors.surfaceRaised, fg: colors.sell },
 };
 
+/** Full-width pill button. */
 export function Button({ title, onPress, variant = "primary", loading, disabled, icon, style, testID, accessibilityHint }: ButtonProps) {
   const p = palette[variant];
   const inactive = disabled || loading;
@@ -39,7 +40,8 @@ export function Button({ title, onPress, variant = "primary", loading, disabled,
       onPress={onPress}
       style={({ pressed }) => [
         styles.base,
-        { backgroundColor: p.bg, borderColor: p.border, opacity: inactive ? 0.55 : pressed ? 0.8 : 1 },
+        variant === "ghost" && styles.ghost,
+        { backgroundColor: p.bg, opacity: inactive ? 0.5 : pressed ? 0.75 : 1 },
         style,
       ]}
     >
@@ -57,13 +59,13 @@ export function Button({ title, onPress, variant = "primary", loading, disabled,
 
 const styles = StyleSheet.create({
   base: {
-    minHeight: 48,
-    borderRadius: radius.md,
-    borderWidth: 1,
+    minHeight: 52,
+    borderRadius: radius.pill,
     alignItems: "center",
     justifyContent: "center",
-    paddingHorizontal: spacing.lg,
+    paddingHorizontal: spacing.xl,
   },
+  ghost: { minHeight: 44 },
   row: { flexDirection: "row", alignItems: "center", gap: spacing.sm },
-  title: { fontFamily: fonts.semibold, fontSize: 15.5 },
+  title: { fontFamily: fonts.semibold, fontSize: 16, letterSpacing: -0.1 },
 });

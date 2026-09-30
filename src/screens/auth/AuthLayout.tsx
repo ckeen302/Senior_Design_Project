@@ -3,7 +3,7 @@ import { KeyboardAvoidingView, Platform, ScrollView, StyleSheet, View } from "re
 import { SafeAreaView } from "react-native-safe-area-context";
 import { AppText } from "../../components/AppText";
 import { BrandMark } from "../../components/BrandMark";
-import { colors, spacing } from "../../theme";
+import { colors, gutter, spacing } from "../../theme";
 
 export function AuthLayout({ title, subtitle, children }: { title: string; subtitle: string; children: ReactNode }) {
   return (
@@ -11,9 +11,9 @@ export function AuthLayout({ title, subtitle, children }: { title: string; subti
       <KeyboardAvoidingView style={styles.flex} behavior={Platform.OS === "ios" ? "padding" : undefined}>
         <ScrollView contentContainerStyle={styles.scroll} keyboardShouldPersistTaps="handled">
           <View style={styles.inner}>
-            <BrandMark />
+            <BrandMark size="small" />
             <View style={styles.heading}>
-              <AppText variant="title">{title}</AppText>
+              <AppText variant="display">{title}</AppText>
               <AppText variant="body" color={colors.textMuted}>
                 {subtitle}
               </AppText>
@@ -29,7 +29,7 @@ export function AuthLayout({ title, subtitle, children }: { title: string; subti
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: colors.background },
   flex: { flex: 1 },
-  scroll: { flexGrow: 1, justifyContent: "center", padding: spacing.xl },
-  inner: { width: "100%", maxWidth: 440, alignSelf: "center", gap: spacing.xl },
+  scroll: { flexGrow: 1, paddingHorizontal: gutter, paddingTop: spacing.xxl, paddingBottom: spacing.xl },
+  inner: { width: "100%", maxWidth: 440, alignSelf: "center", gap: spacing.xxl },
   heading: { gap: spacing.sm },
 });

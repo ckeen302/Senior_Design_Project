@@ -1,4 +1,4 @@
-import { forwardRef, type ReactNode } from "react";
+import { forwardRef, type ReactNode, useState } from "react";
 import { StyleSheet, TextInput, type TextInputProps, View } from "react-native";
 import { colors, fonts, radius, spacing } from "../theme";
 import { AppText } from "./AppText";
@@ -10,22 +10,30 @@ export interface FormFieldProps extends TextInputProps {
   accessory?: ReactNode;
 }
 
+/** Filled input: quiet until focused (mint ring) or invalid (orange-red ring). */
 export const FormField = forwardRef<TextInput, FormFieldProps>(function FormField(
-  { label, error, hint, accessory, style, ...inputProps },
+  { label, error, hint, accessory, style, onFocus, onBlur, ...inputProps },
   ref,
 ) {
+  const [focused, setFocused] = useState(false);
   return (
     <View style={styles.container}>
-      <AppText variant="label" style={styles.label}>
-        {label}
-      </AppText>
-      <View style={[styles.inputRow, error ? styles.inputError : null]}>
+      <AppText variant="label">{label}</AppText>
+      <View style={[styles.inputRow, focused && styles.focused, error ? styles.invalid : null]}>
         <TextInput
           ref={ref}
           placeholderTextColor={colors.textFaint}
           selectionColor={colors.primary}
           accessibilityLabel={label}
           style={[styles.input, style]}
+          onFocus={(e) => {
+            setFocused(true);
+            onFocus?.(e);
+          }}
+          onBlur={(e) => {
+            setFocused(false);
+            onBlur?.(e);
+          }}
           {...inputProps}
         />
         {accessory}
@@ -42,24 +50,26 @@ export const FormField = forwardRef<TextInput, FormFieldProps>(function FormFiel
 });
 
 const styles = StyleSheet.create({
-  container: { gap: 6 },
-  label: { marginLeft: 2 },
+  container: { gap: spacing.sm },
   inputRow: {
     flexDirection: "row",
     alignItems: "center",
     backgroundColor: colors.surfaceRaised,
     borderRadius: radius.md,
-    borderWidth: 1,
-    borderColor: colors.border,
+    borderWidth: 1.5,
+    borderColor: "transparent",
     paddingRight: spacing.sm,
   },
-  inputError: { borderColor: colors.sell },
+  focused: { borderColor: colors.primary },
+  invalid: { borderColor: colors.sell },
   input: {
     flex: 1,
-    minHeight: 48,
-    paddingHorizontal: spacing.md,
+    minHeight: 52,
+    paddingHorizontal: spacing.lg,
     color: colors.text,
     fontFamily: fonts.regular,
-    fontSize: 15.5,
+    fontSize: 16,
+    // Web: the row draws its own focus ring.
+    outlineWidth: 0,
   },
 });

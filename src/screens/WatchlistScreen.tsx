@@ -1,17 +1,17 @@
 import { Ionicons } from "@expo/vector-icons";
 import { useNavigation } from "@react-navigation/native";
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Alert, FlatList, Platform, Pressable, RefreshControl, StyleSheet, View } from "react-native";
 import ReanimatedSwipeable from "react-native-gesture-handler/ReanimatedSwipeable";
 import { AppText } from "../components/AppText";
-import { SentimentBar } from "../components/SentimentBar";
+import { CompanyRow } from "../components/CompanyRow";
 import { EmptyState, ErrorState, LoadingView } from "../components/StateViews";
 import { TickerSearchModal } from "../components/TickerSearchModal";
+import { Divider, ScreenHeader } from "../components/ui";
 import { useAddToWatchlist, useRemoveFromWatchlist, useWatchlist } from "../hooks/useWatchlist";
 import type { WatchlistItem } from "../lib/api";
 import { errorMessage } from "../lib/errors";
-import { normalizeSignalLabel, signalColor, signalSummary } from "../lib/signal";
-import { colors, fonts, radius, spacing } from "../theme";
+import { colors, fonts, gutter, radius, spacing } from "../theme";
 
 const ACTION_WIDTH = 96;
 
@@ -39,21 +39,11 @@ function WatchlistRow({
   onRemove: () => void;
 }) {
   const company = item.company;
-  const sentiment = company?.sentiment ?? null;
-  const score = Number(sentiment?.signal_score ?? 50);
-  const label = normalizeSignalLabel(
-    sentiment?.signal_label,
-    score,
-    (sentiment?.signal_buyers ?? 0) + (sentiment?.signal_sellers ?? 0),
-  );
-  const color = signalColor(label);
-
   return (
     <ReanimatedSwipeable
       friction={2}
       rightThreshold={ACTION_WIDTH / 2}
       overshootRight={false}
-      containerStyle={styles.swipeContainer}
       renderRightActions={(_progress, _translation, methods) => (
         <Pressable
           style={styles.deleteAction}
@@ -65,42 +55,20 @@ function WatchlistRow({
           accessibilityLabel={`Remove ${company?.ticker ?? "stock"} from watchlist`}
           testID={`watchlist-delete-${company?.ticker}`}
         >
-          <Ionicons name="trash-outline" size={20} color="#FFFFFF" />
+          <Ionicons name="trash-outline" size={20} color={colors.onPrimary} />
           <AppText style={styles.deleteText}>Remove</AppText>
         </Pressable>
       )}
     >
-      <Pressable
-        style={({ pressed }) => [styles.row, pressed && styles.pressed]}
+      <CompanyRow
+        ticker={company?.ticker ?? "—"}
+        name={company?.company_name ?? ""}
+        sentiment={company?.sentiment}
         onPress={onOpen}
         onLongPress={() => confirmRemoval(company?.ticker ?? "this stock", onRemove)}
-        delayLongPress={450}
-        accessibilityRole="button"
         accessibilityHint="Swipe left or long-press to remove"
-        accessibilityLabel={`${company?.ticker}, ${company?.company_name}, Insider Signal ${score.toFixed(0)} ${label}`}
-        accessibilityActions={[{ name: "delete", label: "Remove from watchlist" }]}
-        onAccessibilityAction={(e) => e.nativeEvent.actionName === "delete" && onRemove()}
         testID={`watchlist-row-${company?.ticker}`}
-      >
-        <View style={styles.rowTop}>
-          <View style={styles.names}>
-            <AppText variant="heading">{company?.ticker ?? "—"}</AppText>
-            <AppText variant="caption" numberOfLines={1}>
-              {company?.company_name}
-            </AppText>
-          </View>
-          <View style={styles.rowRight}>
-            <AppText style={[styles.label, { color }]}>{label}</AppText>
-            <Ionicons name="chevron-forward" size={18} color={colors.textFaint} />
-          </View>
-        </View>
-        <SentimentBar index={score} label={label} color={color} />
-        {sentiment ? (
-          <AppText variant="caption" numberOfLines={1}>
-            {signalSummary(sentiment)}
-          </AppText>
-        ) : null}
-      </Pressable>
+      />
     </ReanimatedSwipeable>
   );
 }
@@ -114,23 +82,6 @@ export function WatchlistScreen() {
   const [undo, setUndo] = useState<{ ticker: string; companyId: string } | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const undoTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
-
-  useLayoutEffect(() => {
-    navigation.setOptions({
-      headerRight: () => (
-        <Pressable
-          onPress={() => setSearchOpen(true)}
-          style={styles.addButton}
-          accessibilityRole="button"
-          accessibilityLabel="Add a stock"
-          hitSlop={8}
-          testID="watchlist-add"
-        >
-          <Ionicons name="add" size={26} color={colors.text} />
-        </Pressable>
-      ),
-    });
-  }, [navigation]);
 
   useEffect(() => () => clearTimeout(undoTimer.current), []);
 
@@ -157,9 +108,11 @@ export function WatchlistScreen() {
   return (
     <View style={styles.flex}>
       <FlatList
+        style={styles.list}
         data={data}
         keyExtractor={(item) => item.id}
         contentContainerStyle={styles.content}
+        ItemSeparatorComponent={RowDivider}
         refreshControl={
           <RefreshControl
             refreshing={watchlist.isRefetching}
@@ -168,11 +121,25 @@ export function WatchlistScreen() {
           />
         }
         ListHeaderComponent={
-          data.length > 0 ? (
-            <AppText variant="caption" style={styles.hint}>
-              Swipe left (or long-press) to remove a stock. Tap for insider activity and live price.
-            </AppText>
-          ) : null
+          <View>
+            <ScreenHeader
+              title="Watchlist"
+              subtitle={data.length > 0 ? "Swipe left or long-press a stock to remove it." : undefined}
+              right={
+                <Pressable
+                  onPress={() => setSearchOpen(true)}
+                  style={({ pressed }) => [styles.addButton, pressed && styles.addPressed]}
+                  accessibilityRole="button"
+                  accessibilityLabel="Add a stock"
+                  hitSlop={8}
+                  testID="watchlist-add"
+                >
+                  <Ionicons name="add" size={24} color={colors.onPrimary} />
+                </Pressable>
+              }
+            />
+            {data.length > 0 ? <Divider /> : null}
+          </View>
         }
         renderItem={({ item }) => (
           <WatchlistRow
@@ -193,7 +160,7 @@ export function WatchlistScreen() {
             <EmptyState
               icon="star-outline"
               title="Your watchlist is empty"
-              message="Add stocks to follow their insider activity and sentiment."
+              message="Add stocks to follow what their insiders are doing."
               actionLabel="Add a stock"
               onAction={() => setSearchOpen(true)}
             />
@@ -221,25 +188,23 @@ export function WatchlistScreen() {
   );
 }
 
+function RowDivider() {
+  return <Divider inset={gutter + 40 + spacing.md} />;
+}
+
 const styles = StyleSheet.create({
-  flex: { flex: 1 },
-  content: { padding: spacing.lg, gap: spacing.md, flexGrow: 1 },
-  hint: { marginBottom: spacing.xs },
-  addButton: { marginRight: spacing.lg },
-  swipeContainer: { borderRadius: radius.lg, overflow: "hidden" },
-  row: {
-    backgroundColor: colors.surface,
-    padding: spacing.lg,
-    gap: spacing.md,
-    borderRadius: radius.lg,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: colors.border,
+  flex: { flex: 1, backgroundColor: colors.background },
+  list: { backgroundColor: colors.background },
+  content: { flexGrow: 1, paddingBottom: spacing.xxl },
+  addButton: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: colors.primary,
+    alignItems: "center",
+    justifyContent: "center",
   },
-  pressed: { backgroundColor: colors.surfaceRaised },
-  rowTop: { flexDirection: "row", alignItems: "center", gap: spacing.md },
-  names: { flex: 1, gap: 2 },
-  rowRight: { flexDirection: "row", alignItems: "center", gap: 6 },
-  label: { fontFamily: fonts.semibold, fontSize: 12, letterSpacing: 0.6, textTransform: "uppercase" },
+  addPressed: { opacity: 0.75 },
   deleteAction: {
     width: ACTION_WIDTH,
     backgroundColor: colors.sell,
@@ -247,22 +212,20 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     gap: 4,
   },
-  deleteText: { fontFamily: fonts.semibold, fontSize: 12.5, color: "#FFFFFF" },
+  deleteText: { fontFamily: fonts.semibold, fontSize: 12.5, color: colors.onPrimary },
   toast: {
     position: "absolute",
-    left: spacing.lg,
-    right: spacing.lg,
+    left: gutter,
+    right: gutter,
     bottom: spacing.lg,
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
     backgroundColor: colors.surfaceRaised,
     borderRadius: radius.md,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: colors.border,
     paddingHorizontal: spacing.lg,
-    paddingVertical: spacing.md,
+    paddingVertical: 14,
   },
-  toastError: { backgroundColor: colors.sellMuted, borderColor: colors.sell },
+  toastError: { backgroundColor: colors.sellMuted },
   undo: { fontFamily: fonts.semibold, color: colors.primary, fontSize: 15 },
 });

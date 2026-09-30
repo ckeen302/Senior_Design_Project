@@ -4,7 +4,6 @@ import { useLayoutEffect, useState } from "react";
 import { Linking, Pressable, RefreshControl, ScrollView, StyleSheet, useWindowDimensions, View } from "react-native";
 import { AppText } from "../components/AppText";
 import { BuySellChart, type ChartMetric } from "../components/BuySellChart";
-import { Card } from "../components/Card";
 import { Disclaimer } from "../components/Disclaimer";
 import { LivePriceCard } from "../components/LivePriceCard";
 import { SegmentedControl } from "../components/SegmentedControl";
@@ -13,6 +12,7 @@ import { SentimentGauge } from "../components/SentimentGauge";
 import { SignalBreakdown } from "../components/SignalBreakdown";
 import { ErrorState, LoadingView } from "../components/StateViews";
 import { TradeCard } from "../components/TradeCard";
+import { Divider, SectionHeader } from "../components/ui";
 import {
   useCompany,
   useCompanyRealtime,
@@ -25,11 +25,11 @@ import { useNow } from "../hooks/useNow";
 import { useAddToWatchlist, useRemoveFromWatchlist, useWatchlistEntry } from "../hooks/useWatchlist";
 import type { TradeScope } from "../lib/api";
 import { errorMessage } from "../lib/errors";
-import { formatCompactCurrency, formatDay, secFilingUrl, timeAgo } from "../lib/format";
+import { formatCompactCurrency, formatShortDay, secFilingUrl, timeAgo } from "../lib/format";
 import { normalizeSignalLabel, SIGNAL_THRESHOLDS, signalColor, signalSummary } from "../lib/signal";
 import { formatWisiBps, normalizeLabel, sentimentColor, wisiToIndex } from "../lib/wisi";
 import type { AppStackParamList } from "../navigation/types";
-import { colors, spacing } from "../theme";
+import { colors, gutter, spacing } from "../theme";
 
 type Props = NativeStackScreenProps<AppStackParamList, "CompanyDetail">;
 
@@ -57,7 +57,7 @@ export function CompanyDetailScreen({ route, navigation }: Props) {
 
   useLayoutEffect(() => {
     navigation.setOptions({
-      title: ticker ?? "Company",
+      title: ticker ?? "",
       headerRight: () => (
         <Pressable
           disabled={watchBusy}
@@ -67,7 +67,7 @@ export function CompanyDetailScreen({ route, navigation }: Props) {
           accessibilityLabel={watchEntry ? "Remove from watchlist" : "Add to watchlist"}
           testID="detail-watch-toggle"
         >
-          <Ionicons name={watchEntry ? "star" : "star-outline"} size={24} color={watchEntry ? colors.warning : colors.text} />
+          <Ionicons name={watchEntry ? "star" : "star-outline"} size={23} color={watchEntry ? colors.primary : colors.text} />
         </Pressable>
       ),
     });
@@ -83,12 +83,13 @@ export function CompanyDetailScreen({ route, navigation }: Props) {
   const label = normalizeSignalLabel(sentiment?.signal_label, score, insiders);
   const wisiIndex = sentiment?.sentiment_index ?? wisiToIndex(sentiment?.wisi_score ?? 0);
   const wisiLabel = normalizeLabel(sentiment?.sentiment_label, wisiIndex);
-  const gaugeWidth = Math.min(width - spacing.lg * 4, 300);
+  const gaugeWidth = Math.min(width - gutter * 2, 300);
   const refreshing = company.isRefetching || transactions.isRefetching || activity.isRefetching ||
     breakdown.isRefetching;
 
   return (
     <ScrollView
+      style={styles.screen}
       contentContainerStyle={styles.content}
       refreshControl={
         <RefreshControl
@@ -103,24 +104,24 @@ export function CompanyDetailScreen({ route, navigation }: Props) {
         />
       }
     >
-      <View style={styles.titleBlock}>
+      <View style={styles.hero}>
         <AppText variant="title">{detail.company_name}</AppText>
         <AppText variant="caption">
-          {detail.ticker} · CIK {detail.cik}
+          {detail.ticker}
           {detail.market_cap && detail.market_cap_updated_at
             ? ` · Market cap ${formatCompactCurrency(detail.market_cap)}`
             : ""}
         </AppText>
+        <View style={styles.price}>
+          <LivePriceCard ticker={detail.ticker} price={price} />
+        </View>
       </View>
 
-      <LivePriceCard ticker={detail.ticker} price={price} />
+      <Divider />
 
-      <Card style={styles.section}>
-        <View style={styles.sectionHeader}>
-          <AppText variant="heading">Insider Signal</AppText>
-          <AppText variant="caption">last 90 days</AppText>
-        </View>
-        <View style={styles.gaugeWrap}>
+      <View style={styles.section}>
+        <SectionHeader title="Insider Signal" />
+        <View style={styles.gauge}>
           <SentimentGauge
             index={score}
             label={label}
@@ -131,19 +132,26 @@ export function CompanyDetailScreen({ route, navigation }: Props) {
             name="Insider Signal"
           />
         </View>
-        <AppText variant="bodyStrong" style={styles.center}>
-          {sentiment ? signalSummary(sentiment) : "No insider trades yet"}
-        </AppText>
-        {sentiment?.signal_last_trade_date ? (
-          <AppText variant="caption" style={styles.center}>
-            Latest counted trade {formatDay(sentiment.signal_last_trade_date)} · updated{" "}
-            {timeAgo(sentiment.last_updated, now)}
+        <View style={styles.padded}>
+          <AppText variant="subheading" style={styles.center}>
+            {sentiment ? signalSummary(sentiment) : "No insider trades yet"}
           </AppText>
-        ) : null}
-      </Card>
+          <AppText variant="caption" style={styles.center}>
+            Last 90 days
+            {sentiment?.signal_last_trade_date ? ` · latest trade ${formatShortDay(sentiment.signal_last_trade_date)}` : ""}
+          </AppText>
+          {sentiment ? (
+            <AppText variant="micro" color={colors.textFaint} style={styles.center}>
+              Updated {timeAgo(sentiment.last_updated, now)}
+            </AppText>
+          ) : null}
+        </View>
+      </View>
 
-      <Card style={styles.section}>
-        <AppText variant="heading">Why this score</AppText>
+      <Divider />
+
+      <View style={styles.section}>
+        <SectionHeader title="Why this score" />
         {breakdown.isPending ? (
           <LoadingView />
         ) : breakdown.isError ? (
@@ -151,13 +159,13 @@ export function CompanyDetailScreen({ route, navigation }: Props) {
         ) : (
           <SignalBreakdown rows={breakdown.data} sentiment={sentiment} price={price.price} />
         )}
-      </Card>
+      </View>
 
-      <Card style={styles.section}>
-        <View style={styles.sectionHeader}>
-          <AppText variant="heading">Insider buying vs. selling</AppText>
-        </View>
-        <View style={styles.controls}>
+      <Divider />
+
+      <View style={styles.section}>
+        <SectionHeader title="Buying vs. selling" />
+        <View style={[styles.controls, styles.padded]}>
           <SegmentedControl
             options={[
               { value: "value", label: "$ Value" },
@@ -169,26 +177,30 @@ export function CompanyDetailScreen({ route, navigation }: Props) {
           <SegmentedControl
             options={[
               { value: "6", label: "6M" },
-              { value: "12", label: "12M" },
+              { value: "12", label: "1Y" },
             ]}
             value={months}
             onChange={setMonths}
           />
         </View>
-        {activity.isPending ? (
-          <View style={styles.chartPlaceholder}>
-            <LoadingView />
-          </View>
-        ) : activity.isError ? (
-          <ErrorState message={errorMessage(activity.error)} onRetry={() => activity.refetch()} />
-        ) : (
-          <BuySellChart data={activity.data} metric={metric} />
-        )}
-      </Card>
+        <View style={styles.padded}>
+          {activity.isPending ? (
+            <View style={styles.chartPlaceholder}>
+              <LoadingView />
+            </View>
+          ) : activity.isError ? (
+            <ErrorState message={errorMessage(activity.error)} onRetry={() => activity.refetch()} />
+          ) : (
+            <BuySellChart data={activity.data} metric={metric} />
+          )}
+        </View>
+      </View>
+
+      <Divider />
 
       <View style={styles.section}>
-        <View style={styles.sectionHeader}>
-          <AppText variant="heading">Filings</AppText>
+        <SectionHeader title="Filings" />
+        <View style={styles.padded}>
           <SegmentedControl
             options={[
               { value: "key", label: "Buys & sells" },
@@ -203,30 +215,36 @@ export function CompanyDetailScreen({ route, navigation }: Props) {
         ) : transactions.isError ? (
           <ErrorState message={errorMessage(transactions.error)} onRetry={() => transactions.refetch()} />
         ) : transactions.data.length === 0 ? (
-          <AppText variant="caption">
+          <AppText variant="caption" style={[styles.padded, styles.empty]}>
             {scope === "key"
               ? `No open-market insider buys or sells for ${detail.ticker} yet. Switch to All to see awards and planned sales.`
               : `No filings ingested for ${detail.ticker} yet.`}
           </AppText>
         ) : (
-          transactions.data.map((trade) => (
-            <TradeCard
-              key={trade.id}
-              trade={trade}
-              now={now}
-              onPress={() => Linking.openURL(secFilingUrl(detail.cik, trade.accession_number))}
-            />
-          ))
+          <View style={styles.rows}>
+            {transactions.data.map((trade, i) => (
+              <View key={trade.id}>
+                {i > 0 ? <Divider inset={gutter} /> : null}
+                <TradeCard
+                  trade={trade}
+                  now={now}
+                  onPress={() => Linking.openURL(secFilingUrl(detail.cik, trade.accession_number))}
+                />
+              </View>
+            ))}
+            <AppText variant="caption" style={[styles.padded, styles.hint]}>
+              Tap a filing to open it on SEC EDGAR.
+            </AppText>
+          </View>
         )}
-        {transactions.data && transactions.data.length > 0 ? (
-          <AppText variant="caption">Tap a filing to open it on SEC EDGAR.</AppText>
-        ) : null}
       </View>
 
-      <Card style={styles.section}>
-        <View style={styles.sectionHeader}>
-          <AppText variant="bodyStrong">Classic WISI</AppText>
-          <AppText variant="caption" style={{ color: sentimentColor(wisiLabel) }}>
+      <Divider />
+
+      <View style={[styles.section, styles.padded, styles.wisi]}>
+        <View style={styles.wisiHeader}>
+          <AppText variant="subheading">Classic WISI</AppText>
+          <AppText variant="label" color={sentimentColor(wisiLabel)}>
             {wisiLabel}
           </AppText>
         </View>
@@ -236,20 +254,30 @@ export function CompanyDetailScreen({ route, navigation }: Props) {
           weighted by role and divided by market cap. {formatWisiBps(sentiment?.wisi_score)} ·{" "}
           {sentiment?.buy_count ?? 0} buys · {sentiment?.sell_count ?? 0} sells.
         </AppText>
-      </Card>
+      </View>
 
-      <Disclaimer />
+      <View style={[styles.padded, styles.disclaimer]}>
+        <Disclaimer />
+      </View>
     </ScrollView>
   );
 }
 
 const styles = StyleSheet.create({
-  content: { padding: spacing.lg, gap: spacing.lg, paddingBottom: spacing.xxl },
-  titleBlock: { gap: 4 },
-  section: { gap: spacing.md },
-  sectionHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", gap: spacing.sm },
-  gaugeWrap: { alignItems: "center" },
+  screen: { backgroundColor: colors.background },
+  content: { paddingBottom: spacing.xxl },
+  hero: { paddingHorizontal: gutter, paddingTop: spacing.sm, paddingBottom: spacing.xl, gap: 2 },
+  price: { marginTop: spacing.lg },
+  section: { paddingVertical: spacing.xl },
+  padded: { paddingHorizontal: gutter },
+  gauge: { alignItems: "center", marginTop: spacing.md, marginBottom: spacing.lg },
   center: { textAlign: "center" },
-  controls: { flexDirection: "row", justifyContent: "space-between", flexWrap: "wrap", gap: spacing.sm },
+  controls: { flexDirection: "row", justifyContent: "space-between", flexWrap: "wrap", gap: spacing.sm, marginBottom: spacing.lg },
   chartPlaceholder: { height: 220 },
+  rows: { marginTop: spacing.sm },
+  empty: { marginTop: spacing.md },
+  hint: { marginTop: spacing.sm },
+  wisi: { gap: spacing.md },
+  wisiHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
+  disclaimer: { paddingTop: spacing.sm },
 });

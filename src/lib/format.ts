@@ -23,21 +23,53 @@ export function formatPrice(value: number | null | undefined): string {
   return isNum(value) ? usdCents.format(value) : "—";
 }
 
+type Unit = [size: number, suffix: string, digits: number];
+
+/**
+ * Scales a non-negative number to the largest unit it reaches, largest unit
+ * first. Moves up a unit when rounding reaches 1000, so 999,999 is "1.0M",
+ * not "1000K". Returns null below the smallest unit.
+ */
+function scaleToUnit(abs: number, units: Unit[]): string | null {
+  for (let i = 0; i < units.length; i++) {
+    const [size, suffix, digits] = units[i];
+    if (abs < size) continue;
+    const text = (abs / size).toFixed(digits);
+    if (Number(text) >= 1000 && i > 0) {
+      const [bigger, biggerSuffix, biggerDigits] = units[i - 1];
+      return `${(abs / bigger).toFixed(biggerDigits)}${biggerSuffix}`;
+    }
+    return `${text}${suffix}`;
+  }
+  return null;
+}
+
 /** $1.3M, -$250K, $4.98T */
 export function formatCompactCurrency(value: number | null | undefined): string {
   if (!isNum(value)) return "—";
   const sign = value < 0 ? "-" : "";
   const abs = Math.abs(value);
-  const units: [number, string, number][] = [
+  const scaled = scaleToUnit(abs, [
     [1e12, "T", 2],
     [1e9, "B", 1],
     [1e6, "M", 1],
     [1e3, "K", 0],
-  ];
-  for (const [size, suffix, digits] of units) {
-    if (abs >= size) return `${sign}$${(abs / size).toFixed(digits)}${suffix}`;
-  }
-  return `${sign}${usdWhole.format(abs)}`;
+  ]);
+  return scaled ? `${sign}$${scaled}` : `${sign}${usdWhole.format(abs)}`;
+}
+
+/** 1.2K, 12K, 3.4M, 1.1B (plain counts). */
+export function formatCompactNumber(value: number | null | undefined): string {
+  if (!isNum(value)) return "—";
+  const abs = Math.abs(value);
+  const sign = value < 0 ? "-" : "";
+  const scaled = scaleToUnit(abs, [
+    [1e9, "B", 1],
+    [1e6, "M", 1],
+    // One decimal below 10K ("1.2K"), whole thousands above ("12K").
+    [1e3, "K", abs >= 9950 ? 0 : 1],
+  ]);
+  return `${sign}${scaled ?? wholeNumber.format(abs)}`;
 }
 
 export function formatShares(value: number | null | undefined): string {
@@ -67,12 +99,23 @@ export function timeAgo(iso: string | null | undefined, now: number = Date.now()
   return date.getFullYear() === new Date(now).getFullYear() ? shortDate.format(date) : longDate.format(date);
 }
 
+function parseDay(day: string | null | undefined): Date | null {
+  if (!day) return null;
+  const [y, m, d] = day.slice(0, 10).split("-").map(Number);
+  return y && m && d ? new Date(y, m - 1, d) : null;
+}
+
 /** Formats a plain YYYY-MM-DD date (no timezone shift). */
 export function formatDay(day: string | null | undefined): string {
-  if (!day) return "—";
-  const [y, m, d] = day.slice(0, 10).split("-").map(Number);
-  if (!y || !m || !d) return "—";
-  return longDate.format(new Date(y, m - 1, d));
+  const date = parseDay(day);
+  return date ? longDate.format(date) : "—";
+}
+
+/** Like formatDay, but drops the year when it is the current one: "Sep 25". */
+export function formatShortDay(day: string | null | undefined, now: number = Date.now()): string {
+  const date = parseDay(day);
+  if (!date) return "—";
+  return date.getFullYear() === new Date(now).getFullYear() ? shortDate.format(date) : longDate.format(date);
 }
 
 const KEEP_UPPER = new Set(["LLC", "LP", "LLP", "PLC", "NV", "SA", "AG", "USA", "II", "III", "IV", "CEO", "CFO"]);

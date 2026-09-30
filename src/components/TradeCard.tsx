@@ -1,14 +1,23 @@
-import { Ionicons } from "@expo/vector-icons";
 import { memo } from "react";
 import { Pressable, StyleSheet, View } from "react-native";
 import type { CompanySummary, InsiderTransaction } from "../lib/api";
-import { formatDay, formatPrice, formatShares, prettifyName, timeAgo } from "../lib/format";
-import { describeTrade, shortRole, type Tone } from "../lib/signal";
-import { colors, fonts, radius, spacing } from "../theme";
+import {
+  formatCompactCurrency,
+  formatCompactNumber,
+  formatDay,
+  formatPrice,
+  formatShares,
+  prettifyName,
+  timeAgo,
+} from "../lib/format";
+import { describeTrade, shortRole, type TradeStory } from "../lib/signal";
+import { colors, gutter, spacing } from "../theme";
 import { AppText } from "./AppText";
+import { TickerAvatar, ValuePill } from "./ui";
 
 export interface TradeCardProps {
   trade: InsiderTransaction;
+  /** Shown in market-wide lists; omitted on a company's own page. */
   company?: CompanySummary | null;
   now: number;
   highlighted?: boolean;
@@ -17,41 +26,35 @@ export interface TradeCardProps {
   onPress?: () => void;
 }
 
-const toneStyles: Record<Tone, { fg: string; bg: string; icon: "arrow-up" | "arrow-down" | "ellipse" }> = {
-  buy: { fg: colors.buy, bg: colors.buyMuted, icon: "arrow-up" },
-  sell: { fg: colors.sell, bg: colors.sellMuted, icon: "arrow-down" },
-  neutral: { fg: colors.neutral, bg: colors.neutralMuted, icon: "ellipse" },
-};
-
-function Chip({ text, tone }: { text: string; tone: Tone }) {
-  const style = toneStyles[tone];
-  return (
-    <View style={[styles.chip, { backgroundColor: style.bg }]}>
-      <Ionicons name={style.icon} size={tone === "neutral" ? 6 : 11} color={style.fg} />
-      <AppText style={[styles.chipText, { color: style.fg }]}>{text}</AppText>
-    </View>
-  );
+/** "+$2.1M" for buys, "−$450K" for sales, the plain amount (or share count) for everything else. */
+function pillText(trade: InsiderTransaction, story: TradeStory): string {
+  if (story.kind === "suspect" || !(trade.total_value > 0)) return `${formatCompactNumber(trade.shares)} sh`;
+  const amount = formatCompactCurrency(trade.total_value);
+  if (story.kind === "buy") return `+${amount}`;
+  if (story.kind === "sell") return `−${amount}`;
+  return amount;
 }
 
+/** One insider trade as a clean list row: who, what, when, and the amount as a value pill. */
 function TradeCardComponent({ trade, company, now, highlighted, relatedFilers = 0, onPress }: TradeCardProps) {
   const story = describeTrade(trade);
   const owner = prettifyName(trade.reporting_owner_name);
   const role = shortRole(trade.owner_title);
   const who = role ? `${owner} · ${role}` : owner;
-  const headlineColor = story.tone === "buy" ? colors.buy : story.tone === "sell" ? colors.sell : colors.text;
-  const details = [
-    trade.shares > 0 && story.kind !== "suspect"
-      ? `${formatShares(trade.shares)} sh${trade.price_per_share > 0 ? ` @ ${formatPrice(trade.price_per_share)}` : ""}`
-      : null,
-    story.kind === "suspect" ? `Filed at ${formatPrice(trade.price_per_share)} a share` : null,
+  const when = timeAgo(trade.filing_date, now);
+  const extras = [
     story.stakeNote,
-  ].filter(Boolean).join(" · ");
+    relatedFilers > 0 ? `+${relatedFilers} related filer${relatedFilers === 1 ? "" : "s"}` : null,
+  ].filter(Boolean);
+  const shares = trade.shares > 0 && story.kind !== "suspect"
+    ? `${formatShares(trade.shares)} sh${trade.price_per_share > 0 ? ` @ ${formatPrice(trade.price_per_share)}` : ""}`
+    : null;
 
   const a11y = [
     company ? `${company.ticker}, ${company.company_name}` : null,
     `${who}: ${story.headline}`,
     story.routine ? `${story.tag}, routine` : story.tag,
-    `filed ${timeAgo(trade.filing_date, now)}`,
+    `filed ${when}`,
   ].filter(Boolean).join(". ");
 
   return (
@@ -60,56 +63,29 @@ function TradeCardComponent({ trade, company, now, highlighted, relatedFilers = 
       disabled={!onPress}
       accessibilityRole={onPress ? "button" : "summary"}
       accessibilityLabel={a11y}
-      style={({ pressed }) => [
-        styles.card,
-        story.routine && styles.routine,
-        highlighted && styles.highlighted,
-        pressed && styles.pressed,
-      ]}
+      style={({ pressed }) => [styles.row, highlighted && styles.highlighted, pressed && styles.pressed]}
     >
-      <View style={styles.header}>
+      {company ? <TickerAvatar ticker={company.ticker} /> : null}
+      <View style={styles.body}>
         {company ? (
-          <View style={styles.companyRow}>
-            <View style={styles.tickerChip}>
-              <AppText style={styles.ticker}>{company.ticker}</AppText>
-            </View>
-            <AppText variant="caption" numberOfLines={1} style={styles.flex}>
-              {company.company_name}
-            </AppText>
-          </View>
-        ) : (
-          <View style={styles.flex} />
-        )}
-        <AppText variant="caption" color={colors.textFaint}>
-          {timeAgo(trade.filing_date, now)}
-        </AppText>
-      </View>
-
-      <AppText variant="heading" tabular color={headlineColor} numberOfLines={2}>
-        {story.headline}
-      </AppText>
-      <AppText variant="bodyStrong" numberOfLines={1}>
-        {who}
-      </AppText>
-      {details ? (
-        <AppText variant="caption" tabular numberOfLines={1}>
-          {details}
-        </AppText>
-      ) : null}
-
-      <View style={styles.chips}>
-        <Chip text={story.routine ? `${story.tag} · routine` : story.tag} tone={story.tone} />
-        {relatedFilers > 0 ? (
-          <AppText variant="caption" color={colors.textFaint}>
-            +{relatedFilers} related filer{relatedFilers === 1 ? "" : "s"}
+          <AppText variant="bodyStrong" numberOfLines={1}>
+            {company.ticker}
+            <AppText variant="caption"> {company.company_name}</AppText>
           </AppText>
-        ) : null}
+        ) : (
+          <AppText variant="bodyStrong" numberOfLines={1}>
+            {owner}
+            {role ? <AppText variant="caption"> · {role}</AppText> : null}
+          </AppText>
+        )}
+        <AppText variant="caption" numberOfLines={1} color={story.routine ? colors.textMuted : colors.text}>
+          {company ? `${story.action} · ${who}` : `${story.action} · ${formatDay(trade.transaction_date)}`}
+        </AppText>
+        <AppText variant="caption" numberOfLines={1} color={colors.textFaint}>
+          {(company ? [when, ...extras] : [shares, ...extras, `filed ${when}`]).filter(Boolean).join(" · ")}
+        </AppText>
       </View>
-
-      <AppText variant="caption" color={colors.textFaint}>
-        Traded {formatDay(trade.transaction_date)}
-        {trade.is_direct === false ? " · Indirect holding" : ""}
-      </AppText>
+      <ValuePill text={pillText(trade, story)} tone={story.tone} />
     </Pressable>
   );
 }
@@ -117,37 +93,15 @@ function TradeCardComponent({ trade, company, now, highlighted, relatedFilers = 
 export const TradeCard = memo(TradeCardComponent);
 
 const styles = StyleSheet.create({
-  card: {
-    backgroundColor: colors.surface,
-    borderRadius: radius.lg,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: colors.border,
-    padding: spacing.lg,
-    gap: 4,
-  },
-  routine: { backgroundColor: "#0F141B" },
-  highlighted: { borderColor: colors.buy, backgroundColor: "#12211A" },
-  pressed: { opacity: 0.85 },
-  header: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 4, gap: spacing.sm },
-  companyRow: { flexDirection: "row", alignItems: "center", gap: spacing.sm, flex: 1 },
-  flex: { flex: 1 },
-  tickerChip: {
-    backgroundColor: colors.surfaceRaised,
-    borderRadius: 6,
-    paddingHorizontal: 7,
-    paddingVertical: 2,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: colors.border,
-  },
-  ticker: { fontFamily: fonts.bold, fontSize: 13, color: colors.text, letterSpacing: 0.4 },
-  chips: { flexDirection: "row", alignItems: "center", gap: spacing.sm, marginTop: 6, flexWrap: "wrap" },
-  chip: {
+  row: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 4,
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: radius.pill,
+    gap: spacing.md,
+    paddingHorizontal: gutter,
+    paddingVertical: 14,
+    backgroundColor: colors.background,
   },
-  chipText: { fontFamily: fonts.semibold, fontSize: 12, letterSpacing: 0.2 },
+  highlighted: { backgroundColor: colors.buyMuted },
+  pressed: { backgroundColor: colors.surface },
+  body: { flex: 1, gap: 2 },
 });

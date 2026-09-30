@@ -3,8 +3,9 @@ import { Pressable, ScrollView, StyleSheet, View } from "react-native";
 import { type BigBuy, fetchBiggestBuys, queryKeys } from "../lib/api";
 import { formatCompactCurrency, prettifyName, timeAgo } from "../lib/format";
 import { describeTrade, shortRole } from "../lib/signal";
-import { colors, fonts, radius, spacing } from "../theme";
+import { colors, fonts, gutter, radius, spacing } from "../theme";
 import { AppText } from "./AppText";
+import { SectionHeader, TickerAvatar } from "./ui";
 
 const DAYS = 7;
 
@@ -19,7 +20,7 @@ export function BiggestBuys({ now, onOpen }: { now: number; onOpen: (item: BigBu
 
   return (
     <View style={styles.section}>
-      <AppText variant="heading">Biggest insider buys this week</AppText>
+      <SectionHeader title="Biggest insider buys this week" />
       <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.row}>
         {buys.data.map((item) => {
           const role = shortRole(item.owner_title);
@@ -37,19 +38,19 @@ export function BiggestBuys({ now, onOpen }: { now: number; onOpen: (item: BigBu
               testID={`big-buy-${item.company?.ticker}`}
             >
               <View style={styles.top}>
-                <AppText style={styles.ticker}>{item.company?.ticker ?? "—"}</AppText>
-                <AppText variant="caption" color={colors.textFaint}>
-                  {timeAgo(item.filing_date, now)}
+                <TickerAvatar ticker={item.company?.ticker} size={30} />
+                <AppText style={styles.ticker} numberOfLines={1}>
+                  {item.company?.ticker ?? "—"}
                 </AppText>
               </View>
-              <AppText style={styles.value} tabular>
-                {formatCompactCurrency(item.total_value)}
+              <AppText style={styles.value} numberOfLines={1}>
+                +{formatCompactCurrency(item.total_value)}
               </AppText>
               <AppText variant="caption" numberOfLines={1} color={colors.text}>
                 {role ? `${role} · ${owner}` : owner}
               </AppText>
               <AppText variant="caption" numberOfLines={1}>
-                {stake ?? item.company?.company_name ?? ""}
+                {[stake, timeAgo(item.filing_date, now)].filter(Boolean).join(" · ")}
               </AppText>
             </Pressable>
           );
@@ -60,19 +61,17 @@ export function BiggestBuys({ now, onOpen }: { now: number; onOpen: (item: BigBu
 }
 
 const styles = StyleSheet.create({
-  section: { gap: spacing.sm },
-  row: { gap: spacing.sm, paddingVertical: 2 },
+  section: { gap: spacing.xs },
+  row: { gap: spacing.md, paddingHorizontal: gutter, paddingVertical: 2 },
   card: {
-    width: 158,
+    width: 168,
     backgroundColor: colors.surface,
-    borderRadius: radius.md,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: colors.buy,
-    padding: spacing.md,
-    gap: 2,
+    borderRadius: radius.lg,
+    padding: spacing.lg,
+    gap: 3,
   },
-  pressed: { opacity: 0.85 },
-  top: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
-  ticker: { fontFamily: fonts.bold, fontSize: 14, color: colors.text, letterSpacing: 0.4 },
-  value: { fontFamily: fonts.bold, fontSize: 22, lineHeight: 28, color: colors.buy },
+  pressed: { backgroundColor: colors.surfaceRaised },
+  top: { flexDirection: "row", alignItems: "center", gap: spacing.sm, marginBottom: spacing.sm },
+  ticker: { fontFamily: fonts.bold, fontSize: 15, color: colors.text, flex: 1 },
+  value: { fontFamily: fonts.bold, fontSize: 24, lineHeight: 30, color: colors.buy, letterSpacing: -0.6 },
 });

@@ -1,9 +1,11 @@
 import {
+  formatCompactNumber,
   describeTransactionCode,
   formatCompactCurrency,
   formatCurrency,
   formatDay,
   formatPercent,
+  formatShortDay,
   formatPrice,
   prettifyName,
   secFilingUrl,
@@ -28,6 +30,14 @@ describe("currency formatting", () => {
     expect(formatCompactCurrency(-2_475_031)).toBe("-$2.5M");
     expect(formatCompactCurrency(44_400)).toBe("$44K");
     expect(formatCompactCurrency(812)).toBe("$812");
+  });
+
+  it("moves up a unit instead of showing 1000 of the smaller one", () => {
+    expect(formatCompactCurrency(999_999)).toBe("$1.0M");
+    expect(formatCompactCurrency(999_960_000)).toBe("$1.0B");
+    expect(formatCompactCurrency(999_960_000_000)).toBe("$1.00T");
+    expect(formatCompactCurrency(-999_700)).toBe("-$1.0M");
+    expect(formatCompactCurrency(999_400)).toBe("$999K");
   });
 
   it("formats signed percentages", () => {
@@ -59,6 +69,13 @@ describe("formatDay", () => {
   it("formats plain dates without timezone drift", () => {
     expect(formatDay("2026-09-24")).toBe("Sep 24, 2026");
   });
+
+  it("drops the current year in the short form", () => {
+    const now = new Date(2026, 8, 30).getTime();
+    expect(formatShortDay("2026-09-24", now)).toBe("Sep 24");
+    expect(formatShortDay("2025-12-31", now)).toBe("Dec 31, 2025");
+    expect(formatShortDay(null, now)).toBe("—");
+  });
 });
 
 describe("prettifyName", () => {
@@ -87,4 +104,14 @@ it("builds SEC EDGAR filing links", () => {
   expect(secFilingUrl("0001318605", "0001104659-26-106432")).toBe(
     "https://www.sec.gov/Archives/edgar/data/1318605/000110465926106432/0001104659-26-106432-index.htm",
   );
+});
+
+it("formats plain counts compactly", () => {
+  expect(formatCompactNumber(950)).toBe("950");
+  expect(formatCompactNumber(1234)).toBe("1.2K");
+  expect(formatCompactNumber(40_000_000)).toBe("40.0M");
+  expect(formatCompactNumber(12_345)).toBe("12K");
+  expect(formatCompactNumber(9_960)).toBe("10K");
+  expect(formatCompactNumber(999_600)).toBe("1.0M");
+  expect(formatCompactNumber(999_960_000)).toBe("1.0B");
 });

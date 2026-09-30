@@ -18,7 +18,7 @@ import { AppText } from "./AppText";
 export type ChartMetric = "value" | "count";
 
 /** colors.neutral at 45% — routine sales stay visible without competing with real trades. */
-const ROUTINE_COLOR = "rgba(148,163,184,0.45)";
+const ROUTINE_COLOR = "rgba(142,142,147,0.45)";
 
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const interFont = require("@expo-google-fonts/inter/400Regular/Inter_400Regular.ttf");

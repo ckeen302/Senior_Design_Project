@@ -116,6 +116,8 @@ export interface TradeStory {
   tone: Tone;
   /** "Bought $2.1M", "Sold $938K to cover taxes", "Received 12,000 shares". */
   headline: string;
+  /** Short verb phrase for list rows: "Bought", "Sold to cover taxes", "Stock award". */
+  action: string;
   /** Short chip text: "Open-market buy", "10b5-1 plan", "Tax sale", ... */
   tag: string;
   /** Pre-scheduled or administrative: says little about what insiders think. */
@@ -139,7 +141,7 @@ function amount(t: StoryInput): string {
 function stakeNote(t: StoryInput, kind: TradeKind): string | null {
   const pct = t.stake_change_pct ?? stakeChangePct(t.transaction_code, t.shares, t.post_transaction_shares);
   if (pct === null || pct === undefined) return null;
-  const shown = pct < 1 ? "<1" : pct >= 1000 ? "1,000+" : String(Math.round(pct));
+  const shown = pct < 0.1 ? "<0.1" : pct < 1 ? pct.toFixed(1) : pct >= 1000 ? "1,000+" : String(Math.round(pct));
   if (kind === "buy" || kind === "planned-buy") return `+${shown}% stake`;
   // Option sales: the exercised shares inflate the "holding", so skip the note.
   if (kind === "sell" || kind === "planned-sale" || kind === "tax-sale") return `Sold ${shown}% of stake`;
@@ -150,7 +152,7 @@ function stakeNote(t: StoryInput, kind: TradeKind): string | null {
 export function describeTrade(t: StoryInput): TradeStory {
   const code = (t.transaction_code ?? "").toUpperCase();
   const shares = `${formatShares(t.shares)} shares`;
-  let story: Omit<TradeStory, "stakeNote">;
+  let story: Omit<TradeStory, "stakeNote" | "action">;
 
   if ((code === "P" || code === "S") && t.price_suspect) {
     // The filing's price is implausible, so its dollar amount is not repeated.
@@ -216,8 +218,24 @@ export function describeTrade(t: StoryInput): TradeStory {
       routine: true,
     };
   }
-  return { ...story, stakeNote: stakeNote(t, story.kind) };
+  const action = story.kind === "exercise" && code === "C" ? "Converted" : ACTIONS[story.kind];
+  return { ...story, action, stakeNote: stakeNote(t, story.kind) };
 }
+
+const ACTIONS: Record<TradeKind, string> = {
+  buy: "Bought",
+  sell: "Sold",
+  "planned-buy": "Bought under a 10b5-1 plan",
+  "planned-sale": "Sold under a 10b5-1 plan",
+  "tax-sale": "Sold to cover taxes",
+  "option-sale": "Exercised options and sold",
+  "tax-withholding": "Shares withheld for taxes",
+  award: "Stock award",
+  exercise: "Exercised options",
+  gift: "Gift",
+  suspect: "Price looks wrong in filing",
+  other: "Other filing",
+};
 
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
 

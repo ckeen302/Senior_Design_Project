@@ -1,36 +1,29 @@
 import { StyleSheet, View } from "react-native";
-import { colors, fonts, radius } from "../theme";
+import { colors, fonts } from "../theme";
 import { AppText } from "./AppText";
 
 export type PillTone = "live" | "neutral" | "warning" | "danger";
 
-const toneStyles: Record<PillTone, { fg: string; bg: string }> = {
-  live: { fg: colors.buy, bg: colors.buyMuted },
-  neutral: { fg: colors.neutral, bg: colors.neutralMuted },
-  warning: { fg: colors.warning, bg: colors.warningMuted },
-  danger: { fg: colors.sell, bg: colors.sellMuted },
+const toneColor: Record<PillTone, string> = {
+  live: colors.buy,
+  neutral: colors.textMuted,
+  warning: colors.warning,
+  danger: colors.sell,
 };
 
+/** A quiet status: coloured dot + label. */
 export function StatusPill({ label, tone }: { label: string; tone: PillTone }) {
-  const t = toneStyles[tone];
+  const color = toneColor[tone];
   return (
-    <View style={[styles.pill, { backgroundColor: t.bg }]} accessibilityLabel={label}>
-      <View style={[styles.dot, { backgroundColor: t.fg }]} />
-      <AppText style={[styles.text, { color: t.fg }]}>{label}</AppText>
+    <View style={styles.wrap} accessibilityLabel={label}>
+      <View style={[styles.dot, { backgroundColor: color }]} />
+      <AppText style={[styles.text, { color: tone === "live" ? colors.text : color }]}>{label}</AppText>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  pill: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 5,
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: radius.pill,
-    alignSelf: "flex-start",
-  },
-  dot: { width: 6, height: 6, borderRadius: 3 },
-  text: { fontFamily: fonts.semibold, fontSize: 11, letterSpacing: 0.6, textTransform: "uppercase" },
+  wrap: { flexDirection: "row", alignItems: "center", gap: 6 },
+  dot: { width: 7, height: 7, borderRadius: 3.5 },
+  text: { fontFamily: fonts.medium, fontSize: 13 },
 });

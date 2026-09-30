@@ -1,12 +1,22 @@
 import { StyleSheet, Text, type TextProps } from "react-native";
 import { colors, fonts } from "../theme";
 
-export type TextVariant = "display" | "title" | "heading" | "body" | "bodyStrong" | "caption" | "label";
+export type TextVariant =
+  | "hero"
+  | "display"
+  | "title"
+  | "heading"
+  | "subheading"
+  | "body"
+  | "bodyStrong"
+  | "caption"
+  | "label"
+  | "micro";
 
 export interface AppTextProps extends TextProps {
   variant?: TextVariant;
   color?: string;
-  /** Fixed-width digits so prices and values do not jitter when they update. */
+  /** Fixed-width digits for numbers in columns and live-updating values. */
   tabular?: boolean;
 }
 
@@ -20,19 +30,15 @@ export function AppText({ variant = "body", color, tabular, style, ...rest }: Ap
 }
 
 const styles = StyleSheet.create({
-  display: { fontFamily: fonts.bold, fontSize: 32, lineHeight: 38, color: colors.text, letterSpacing: -0.5 },
-  title: { fontFamily: fonts.bold, fontSize: 22, lineHeight: 28, color: colors.text, letterSpacing: -0.3 },
-  heading: { fontFamily: fonts.semibold, fontSize: 17, lineHeight: 22, color: colors.text },
+  hero: { fontFamily: fonts.bold, fontSize: 44, lineHeight: 50, color: colors.text, letterSpacing: -1.4 },
+  display: { fontFamily: fonts.bold, fontSize: 34, lineHeight: 40, color: colors.text, letterSpacing: -1 },
+  title: { fontFamily: fonts.bold, fontSize: 28, lineHeight: 34, color: colors.text, letterSpacing: -0.7 },
+  heading: { fontFamily: fonts.bold, fontSize: 19, lineHeight: 24, color: colors.text, letterSpacing: -0.3 },
+  subheading: { fontFamily: fonts.semibold, fontSize: 16, lineHeight: 21, color: colors.text, letterSpacing: -0.1 },
   body: { fontFamily: fonts.regular, fontSize: 15, lineHeight: 21, color: colors.text },
   bodyStrong: { fontFamily: fonts.semibold, fontSize: 15, lineHeight: 21, color: colors.text },
-  caption: { fontFamily: fonts.regular, fontSize: 12.5, lineHeight: 17, color: colors.textMuted },
-  label: {
-    fontFamily: fonts.medium,
-    fontSize: 11.5,
-    lineHeight: 15,
-    color: colors.textMuted,
-    letterSpacing: 0.6,
-    textTransform: "uppercase",
-  },
+  caption: { fontFamily: fonts.regular, fontSize: 13, lineHeight: 18, color: colors.textMuted },
+  label: { fontFamily: fonts.medium, fontSize: 13, lineHeight: 18, color: colors.textMuted },
+  micro: { fontFamily: fonts.medium, fontSize: 11, lineHeight: 14, color: colors.textMuted },
   tabular: { fontVariant: ["tabular-nums"] },
 });

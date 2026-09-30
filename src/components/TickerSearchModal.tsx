@@ -11,9 +11,10 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useAddToWatchlist, useWatchlist } from "../hooks/useWatchlist";
 import { type CompanySummary, queryKeys, sanitizeSearchTerm, searchCompanies, trackTicker } from "../lib/api";
 import { errorMessage } from "../lib/errors";
-import { colors, fonts, radius, spacing } from "../theme";
+import { colors, fonts, gutter, radius, spacing } from "../theme";
 import { AppText } from "./AppText";
 import { Button } from "./Button";
+import { TickerAvatar } from "./ui";
 
 const TICKER_PATTERN = /^[A-Z][A-Z0-9.-]{0,9}$/;
 
@@ -133,6 +134,7 @@ export function TickerSearchModal({ visible, onClose }: { visible: boolean; onCl
                 accessibilityRole="button"
                 accessibilityLabel={`${watched ? "Already watching" : "Add"} ${item.ticker}, ${item.company_name}`}
               >
+                <TickerAvatar ticker={item.ticker} />
                 <View style={styles.rowText}>
                   <AppText variant="bodyStrong">{item.ticker}</AppText>
                   <AppText variant="caption" numberOfLines={1}>
@@ -140,9 +142,9 @@ export function TickerSearchModal({ visible, onClose }: { visible: boolean; onCl
                   </AppText>
                 </View>
                 <Ionicons
-                  name={watched ? "checkmark-circle" : "add-circle-outline"}
-                  size={26}
-                  color={watched ? colors.buy : colors.primary}
+                  name={watched ? "checkmark-circle" : "add-circle"}
+                  size={28}
+                  color={watched ? colors.textMuted : colors.primary}
                 />
               </Pressable>
             );
@@ -180,30 +182,34 @@ export function TickerSearchModal({ visible, onClose }: { visible: boolean; onCl
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: colors.background, paddingHorizontal: spacing.lg, gap: spacing.md },
-  header: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
+  container: { flex: 1, backgroundColor: colors.background, paddingHorizontal: gutter, gap: spacing.md },
+  header: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: spacing.xs },
   searchBox: {
     flexDirection: "row",
     alignItems: "center",
     gap: spacing.sm,
     backgroundColor: colors.surfaceRaised,
     borderRadius: radius.md,
-    borderWidth: 1,
-    borderColor: colors.border,
     paddingHorizontal: spacing.md,
   },
-  input: { flex: 1, minHeight: 48, color: colors.text, fontFamily: fonts.medium, fontSize: 16 },
+  input: { flex: 1, minHeight: 48, color: colors.text, fontFamily: fonts.medium, fontSize: 16, outlineWidth: 0 },
   message: { paddingHorizontal: 2 },
   list: { paddingBottom: spacing.xl },
   row: {
     flexDirection: "row",
     alignItems: "center",
-    paddingVertical: spacing.md,
+    paddingVertical: 12,
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: colors.border,
     gap: spacing.md,
   },
   rowText: { flex: 1, gap: 2 },
   hint: { textAlign: "center", marginTop: spacing.xl, paddingHorizontal: spacing.lg },
-  importBox: { marginTop: spacing.lg, gap: spacing.md },
+  importBox: {
+    marginTop: spacing.lg,
+    gap: spacing.md,
+    backgroundColor: colors.surface,
+    borderRadius: radius.lg,
+    padding: spacing.lg,
+  },
 });

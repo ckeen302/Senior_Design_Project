@@ -1,6 +1,5 @@
-import { Ionicons } from "@expo/vector-icons";
-import { StyleSheet, View } from "react-native";
-import { colors, radius, spacing } from "../theme";
+import { StyleSheet } from "react-native";
+import { colors } from "../theme";
 import { AppText } from "./AppText";
 
 export const LEGAL_DISCLAIMER =
@@ -8,24 +7,12 @@ export const LEGAL_DISCLAIMER =
 
 export function Disclaimer() {
   return (
-    <View style={styles.box} accessibilityRole="text">
-      <Ionicons name="information-circle-outline" size={18} color={colors.textMuted} />
-      <AppText variant="caption" style={styles.text}>
-        {LEGAL_DISCLAIMER}
-      </AppText>
-    </View>
+    <AppText variant="caption" color={colors.textFaint} style={styles.text} accessibilityRole="text">
+      {LEGAL_DISCLAIMER}
+    </AppText>
   );
 }
 
 const styles = StyleSheet.create({
-  box: {
-    flexDirection: "row",
-    gap: spacing.sm,
-    padding: spacing.md,
-    borderRadius: radius.md,
-    backgroundColor: colors.surfaceRaised,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: colors.border,
-  },
-  text: { flex: 1 },
+  text: { lineHeight: 18 },
 });

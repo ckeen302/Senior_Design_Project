@@ -1,6 +1,8 @@
 import type { ConfigContext, ExpoConfig } from "expo/config";
 
-const BACKGROUND = "#0A0E13";
+const BACKGROUND = "#000000";
+/** Brand mint: app icon background and notification accent. */
+const BRAND = "#21CE99";
 
 /**
  * Expo app configuration. Public runtime values (Supabase URL, publishable
@@ -25,7 +27,7 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
   },
   android: {
     package: "com.insiderpulse.app",
-    adaptiveIcon: { foregroundImage: "./assets/adaptive-icon.png", backgroundColor: BACKGROUND },
+    adaptiveIcon: { foregroundImage: "./assets/adaptive-icon.png", backgroundColor: BRAND },
   },
   web: {
     favicon: "./assets/favicon.png",
@@ -40,7 +42,7 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
       "expo-splash-screen",
       { image: "./assets/splash-icon.png", imageWidth: 180, resizeMode: "contain", backgroundColor: BACKGROUND },
     ],
-    ["expo-notifications", { color: "#22C55E", defaultChannel: "whale-alerts" }],
+    ["expo-notifications", { color: BRAND, defaultChannel: "whale-alerts" }],
   ],
   extra: {
     eas: { projectId: process.env.EAS_PROJECT_ID || undefined },
