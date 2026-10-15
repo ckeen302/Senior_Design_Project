@@ -192,13 +192,52 @@ a second caller gets `{"skipped": "Another ingestion run is in progress"}`.
 > **Auth tip:** hosted projects require email confirmation by default. For quick testing, turn it off
 > under *Authentication → Sign In / Providers → Email*, or confirm via the emailed link.
 
-## 2. Run the app
+## 2. Run the app on your phone (Expo Go)
+
+You need [Node.js](https://nodejs.org) 20.19+ (or 22.13+) on your computer, the **Expo Go** app on
+your phone (App Store / Play Store), and a free account at [expo.dev](https://expo.dev). Expo Go
+requires you to be signed in with the **same** account in the CLI and in the app.
 
 ```bash
-cp .env.example .env        # add EXPO_PUBLIC_SUPABASE_ANON_KEY (publishable key) + EXPO_PUBLIC_FINNHUB_API_KEY
+git clone -b insiderpulse-app https://github.com/pgedelman/cisc498-project.git
+cd cisc498-project
 npm install
-npx expo start              # scan the QR code with Expo Go, or press i / a / w
+npx expo login             # same account you use in the Expo Go app
 ```
+
+Then create a file named `.env` in the project folder (next to `package.json`) with these three
+lines. Get the values from a teammate in a DM, **not** from the repo or a group chat — `.env` is
+git-ignored and must never be committed:
+
+```
+EXPO_PUBLIC_SUPABASE_URL=https://pnxzcywtjucanmwmmvsr.supabase.co
+EXPO_PUBLIC_SUPABASE_ANON_KEY=<publishable key, starts with sb_publishable_>
+EXPO_PUBLIC_FINNHUB_API_KEY=<Finnhub key>
+```
+
+Start the dev server and open the app:
+
+```bash
+npx expo start -c          # -c clears the cache; needed after any .env change
+```
+
+Scan the QR code with your iPhone's Camera app (Android: scan from inside Expo Go). The app
+bundles and opens in Expo Go. Code changes reload live.
+
+Troubleshooting:
+
+* **Stuck on "Opening project…"** — your Wi-Fi is blocking the connection (campus networks often
+  do). Stop the server (Ctrl+C) and run `npx expo start --tunnel`.
+* **Config error screen** — `.env` is missing or a value is wrong. Fix it, then `npx expo start -c`.
+* **Sign-up email never arrives** — new accounts need email confirmation, and Supabase's built-in
+  mailer only delivers to members of the Supabase org (about 2 emails/hour). Ask the project owner
+  to add you to the org or to confirm your user in the Supabase dashboard. The link in the email
+  opens a broken localhost page; the account is still confirmed, so go back and sign in.
+* **"Push notifications unsupported"** — expected in Expo Go without an EAS project id. Everything
+  else works.
+* A yellow warning about outdated Expo packages is harmless.
+
+Notes:
 
 * Only the **publishable (anon) key** goes in the app. The app refuses to start with a secret /
   `service_role` key, and `npm run check:secrets` fails the build if one appears in code, `.env`
