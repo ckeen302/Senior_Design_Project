@@ -599,4 +599,156 @@ begin
 end;
 $$;
 
+-- 10-K / 10-Q reports: score, visibility, reads ---------------------------------
+do $$
+declare
+  company   uuid;
+  f_prior   uuid;
+  f_now     uuid;
+  f_review  uuid;
+  r_prior   uuid;
+  r_now     uuid;
+  r_review  uuid;
+  s         smallint;
+  j         jsonb;
+  n         integer;
+  feed      record;
+begin
+  insert into public.companies (ticker, cik, company_name) values ('ZZRPT', '9999999801', 'Report Test Co.')
+  returning id into company;
+  insert into public.filings (company_id, accession_number, form, fiscal_year, fiscal_period, period_end, filed_at, primary_doc_url, status)
+  values
+    (company, '0009999999-25-000001', '10-K', 2025, 'FY', '2025-12-31', '2026-02-01T21:05:00Z',
+     'https://www.sec.gov/Archives/edgar/data/9999999801/000999999925000001/a.htm', 'analyzed'),
+    (company, '0009999999-26-000002', '10-K', 2026, 'FY', '2026-12-31', '2027-02-01T21:05:00Z',
+     'https://www.sec.gov/Archives/edgar/data/9999999801/000999999926000002/b.htm', 'analyzed'),
+    (company, '0009999999-26-000003', '10-Q', 2027, 'Q1', '2027-03-31', '2027-05-01T21:05:00Z',
+     'https://www.sec.gov/Archives/edgar/data/9999999801/000999999926000003/c.htm', 'analyzed');
+  select id into f_prior  from public.filings where accession_number = '0009999999-25-000001';
+  select id into f_now    from public.filings where accession_number = '0009999999-26-000002';
+  select id into f_review from public.filings where accession_number = '0009999999-26-000003';
+
+  -- First report: no prior, no metrics -> every component at half points except risk changes (25).
+  insert into public.filing_reports (filing_id, company_id) values (f_prior, company) returning id into r_prior;
+  s := public.compute_report_score(r_prior);
+  assert s = 63, format('first report scored %s, expected 63 (12.5 + 10 + 10 + 25 + 5)', s);
+  assert (select score_label from public.filing_reports where id = r_prior) = 'Mixed', 'first report label';
+  assert (select count(*) from jsonb_array_elements((select score_components from public.filing_reports where id = r_prior))
+           where (value ->> 'available')::boolean = false) = 4, 'missing data should be marked unavailable';
+
+  -- Second report: revenue +20%, cash flow +5%, profit growing, 1 new / 2 reworded / 1 removed risk, 25% rewritten.
+  insert into public.filing_reports (filing_id, company_id, prior_report_id, new_risks, changed_risks, removed_risks,
+                                     unchanged_risks, risk_changed_share, risk_similarity, summary, outlook)
+  values (f_now, company, r_prior, 1, 2, 1, 10, 0.25, 0.991, 'Revenue grew; one new risk.', 'improving')
+  returning id into r_now;
+  insert into public.report_metrics (filing_id, metric, value, unit, period_start, period_end, prior_value, yoy_value, concept)
+  values
+    (f_now, 'revenue', 1200, 'USD', '2026-01-01', '2026-12-31', 1000, 1000, 'us-gaap:Revenues'),
+    (f_now, 'operating_cash_flow', 210, 'USD', '2026-01-01', '2026-12-31', 200, 200, 'us-gaap:NetCashProvidedByUsedInOperatingActivities'),
+    (f_now, 'net_income', 150, 'USD', '2026-01-01', '2026-12-31', 120, 120, 'us-gaap:NetIncomeLoss');
+  s := public.compute_report_score(r_now);
+  -- 25 + (10 + 10 * 0.05 / 0.15) + 20 + (25 - 5 - 4 + 2) + (10 - 5) = 81.3
+  assert s = 81, format('second report scored %s, expected 81', s);
+  assert (select score_label from public.filing_reports where id = r_now) = 'Strong', 'second report label';
+  -- A cash outflow scores zero for cash flow whatever the trend.
+  update public.report_metrics set value = -50 where filing_id = f_now and metric = 'operating_cash_flow';
+  s := public.compute_report_score(r_now);
+  assert s = 68, format('negative cash flow scored %s, expected 68', s);
+
+  insert into public.report_items (report_id, kind, change, severity, category, title, why_it_matters, quote,
+                                   section, quote_start, quote_end, page, verified, sort_order)
+  values
+    (r_now, 'risk', 'new', 'medium', 'regulation', 'Medium new risk', 'Why.', 'A quote that was found.', 'risk_factors', 10, 33, 12, true, 2),
+    (r_now, 'risk', 'new', 'high', 'supply_chain', 'Tariffs raise costs', 'Why.', 'Another quote that was found.', 'risk_factors', 50, 79, 13, true, 3),
+    (r_now, 'risk', 'new', 'high', 'legal', 'Unverified claim', 'Why.', 'A quote the checker did not find.', 'risk_factors', null, null, null, false, 1),
+    (r_now, 'risk', 'removed', 'low', 'macro', 'Pandemic disruption', null, null, 'risk_factors', null, null, null, false, 4),
+    (r_now, 'positive', 'new', null, 'demand', 'Data center demand', 'Why.', 'Demand grew in every region.', 'mdna', 5, 33, 30, true, 5);
+
+  -- Constraints: a verified item needs a located quote; a removed risk has no quote.
+  begin
+    insert into public.report_items (report_id, kind, change, severity, title, section, verified)
+    values (r_now, 'risk', 'new', 'low', 'x', 'risk_factors', true);
+    raise exception 'verified item without a quote accepted';
+  exception when check_violation then null;
+  end;
+  begin
+    insert into public.report_items (report_id, kind, change, severity, title, quote, section)
+    values (r_now, 'risk', 'removed', 'low', 'x', 'still here', 'risk_factors');
+    raise exception 'removed item with a quote accepted';
+  exception when check_violation then null;
+  end;
+  begin
+    insert into public.report_items (report_id, kind, change, severity, title, section)
+    values (r_now, 'positive', 'new', 'high', 'x', 'mdna');
+    raise exception 'positive with a severity accepted';
+  exception when check_violation then null;
+  end;
+
+  -- A report held for review.
+  insert into public.filing_reports (filing_id, company_id, prior_report_id, status)
+  values (f_review, company, r_now, 'needs_review') returning id into r_review;
+
+  -- What the app sees.
+  perform set_config('request.jwt.claims', '', true);
+  set local role anon;
+  select count(*) into n from public.filing_reports where company_id = company;
+  assert n = 2, format('anon sees %s reports, expected 2 (the one under review is hidden)', n);
+  j := public.get_company_report(company);
+  assert (j ->> 'id')::uuid = r_now, 'latest visible report should be the 10-K, not the one under review';
+  assert (j -> 'prior' ->> 'report_score')::int = 63, 'prior report score missing';
+  assert jsonb_array_length(j -> 'items') = 4, format('expected 4 visible items, got %s', jsonb_array_length(j -> 'items'));
+  assert not exists (select 1 from jsonb_array_elements(j -> 'items') e where e.value ->> 'title' = 'Unverified claim'),
+    'an unverified item was shown';
+  assert exists (select 1 from jsonb_array_elements(j -> 'items') e where e.value ->> 'change' = 'removed'),
+    'the removed risk should be shown';
+  assert (j -> 'counts' ->> 'positives')::int = 1, 'positives count';
+  assert jsonb_array_length(j -> 'metrics') = 3, 'metrics missing';
+  assert (j -> 'filing' ->> 'form') = '10-K', 'filing form';
+  assert public.get_filing_report(r_review) is null, 'a report under review was readable';
+  select count(*) into n from public.report_items i where i.report_id = r_review;
+  assert n = 0, 'items of a report under review were readable';
+
+  select * into feed from public.get_report_feed(5) where report_id = r_now;
+  assert feed.biggest_change = 'Tariffs raise costs',
+    format('feed headline should be the high-severity new risk, got %s', feed.biggest_change);
+  assert feed.revenue_yoy = 0.2, format('feed revenue_yoy %s', feed.revenue_yoy);
+  assert feed.prior_score = 63, 'feed prior score';
+  select count(*) into n from public.get_report_feed(5, '2027-01-01T00:00:00Z') where company_id = company;
+  assert n = 1, 'feed paging by filing time';
+
+  begin
+    perform 1 from public.analysis_calls limit 1;
+    raise exception 'anon read analysis_calls';
+  exception when insufficient_privilege then null;
+  end;
+  begin
+    perform public.compute_report_score(r_now);
+    raise exception 'anon ran compute_report_score';
+  exception when insufficient_privilege then null;
+  end;
+  begin
+    update public.filing_reports set report_score = 100 where id = r_now;
+    raise exception 'anon updated a report';
+  exception when insufficient_privilege then null;
+  end;
+  reset role;
+
+  -- Daily usage for the cap.
+  insert into public.analysis_calls (filing_id, section, model, input_tokens, output_tokens, cost_usd)
+  values (f_now, 'risk_factors', 'claude-haiku-5-5', 30000, 4000, 0.005), (f_now, 'mdna', 'claude-haiku-5-5', 20000, 3000, 0.0035);
+  assert (select calls from public.analysis_usage_today()) >= 2, 'usage today';
+  assert (select cost_usd from public.analysis_usage_today()) >= 0.0085, 'cost today';
+  assert not has_function_privilege('authenticated', 'public.analysis_usage_today()', 'execute'),
+    'authenticated can read the usage ledger';
+
+  -- Deleting a filing removes its report, items and metrics.
+  delete from public.filings where id = f_now;
+  assert not exists (select 1 from public.report_items where report_id = r_now), 'items left behind';
+  assert not exists (select 1 from public.report_metrics where filing_id = f_now), 'metrics left behind';
+  assert (select prior_report_id from public.filing_reports where id = r_review) is null, 'prior link not cleared';
+
+  raise notice 'OK  filing reports';
+end;
+$$;
+
 rollback;
