@@ -498,12 +498,15 @@ const FOOTNOTE = /^\(?\d{1,2}\)?\s+\p{L}/u;
 const NUMERIC_TOKEN = /^[$(]*[-\u2013\u2014]?[\d,.]*\d[\d,.]*%?\)?[,;]?$|^[$%\u2014\u2013-]$/;
 const MONTH_TOKEN = /^(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\.?,?$/i;
 
-/** A row of a financial table: at least a third of its tokens are numbers, dates or currency signs. */
+/**
+ * A row of a financial table: a third of its tokens are numbers, dates or
+ * currency signs, or a fifth when the line ends in a number rather than a full stop.
+ */
 function isTableRow(line: string): boolean {
   const tokens = line.split(" ");
   if (tokens.length < 3) return false;
-  const numeric = tokens.filter((t) => NUMERIC_TOKEN.test(t) || MONTH_TOKEN.test(t)).length;
-  return numeric / tokens.length >= 0.34;
+  const numeric = tokens.filter((t) => NUMERIC_TOKEN.test(t) || MONTH_TOKEN.test(t)).length / tokens.length;
+  return numeric >= 0.34 || (numeric >= 0.2 && NUMERIC_TOKEN.test(tokens[tokens.length - 1]));
 }
 
 /**

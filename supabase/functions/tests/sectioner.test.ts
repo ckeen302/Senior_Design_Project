@@ -2,34 +2,14 @@ import { assert, assertEquals, assertStringIncludes } from "jsr:@std/assert@1";
 import {
   decodeEntities,
   findSections,
-  type FilingForm,
   htmlToText,
   normalizeForMatch,
   type Paragraph,
   parseFilingHtml,
   splitParagraphs,
 } from "../_shared/sectioner.ts";
+import { analyse, fixture, loadFiling } from "./filingFixtures.ts";
 
-const FIXTURES = new URL("./fixtures/filings/", import.meta.url);
-
-/** Loads a gzipped EDGAR primary document from fixtures/filings. */
-export async function loadFiling(name: string): Promise<string> {
-  const bytes = await Deno.readFile(new URL(`${name}.htm.gz`, FIXTURES));
-  return await new Response(new Blob([bytes]).stream().pipeThrough(new DecompressionStream("gzip"))).text();
-}
-
-const cache = new Map<string, Promise<ReturnType<typeof analyse>>>();
-function analyse(html: string, form: FilingForm) {
-  const doc = parseFilingHtml(html);
-  const sections = findSections(doc.text, form);
-  const paragraphs = (key: "risk_factors" | "mdna"): Paragraph[] =>
-    sections[key] ? splitParagraphs(sections[key]!, doc.emphasized) : [];
-  return { doc, sections, risk: paragraphs("risk_factors"), mdna: paragraphs("mdna") };
-}
-function fixture(name: string, form: FilingForm) {
-  if (!cache.has(name)) cache.set(name, loadFiling(name).then((html) => analyse(html, form)));
-  return cache.get(name)!;
-}
 const titles = (ps: Paragraph[]) => ps.filter((p) => p.kind === "title").map((p) => p.text);
 
 // ---------------------------------------------------------------------------
